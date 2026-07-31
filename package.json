@@ -1,0 +1,12 @@
+{
+  "name": "s-ilent.unitynn",
+  "displayName": "UnityNN",
+  "version": "0.0.1",
+  "unity": "2022.3",
+  "description": "Importer for NinjaNext formats using Marathon library.",
+  "author": {
+    "name": "Silent",
+    "email": "developer@vrchat.com",
+    "url": "https://github.com/vrchat/packages"
+  }
+}
