@@ -21,8 +21,8 @@ namespace SilentTools
 
     public enum MaterialNaming
     {
-        ByMaterialName = 0,          // "Material_0"
-        ByModelAndMaterialName = 1,  // "Sonic_Material_0"
+        ByMaterialName = 0,          // "3_Texture2_Col_1_Logic_4_TexMap_2"
+        ByModelAndMaterialName = 1,  // "Sonic_3_Texture2_Col_1_Logic_4_TexMap_2"
         ByBaseTextureName = 2        // "chr_sonic_dif" (if texture map exists)
     }
 
@@ -108,7 +108,8 @@ namespace SilentTools
                 NinjaMaterialLogic matLogic = FindMaterialLogic(objData, nMat.MaterialLogicOffset);
                 NinjaTextureMap texMap = FindTextureMap(objData, nMat.MaterialTexMapDescriptionOffset);
 
-                string matName = DetermineMaterialName(texMap, texList, modelName, i, namingMode);
+                // Determine Material Name using ID, Type/Flags, Col, Logic, and TexMap
+                string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, namingMode);
 
                 Material mat = CreateMaterialData(matColour, matLogic, texMap, texList, i, matName, stdShader, modelFolderPath, searchDirectory, ctx);
 
@@ -182,10 +183,41 @@ namespace SilentTools
             }
             return null;
         }
+
+        private static int FindMaterialColourIndex(NinjaObject objData, uint offset)
+        {
+            if (offset == 0 || objData == null || objData.MaterialColours == null) return -1;
+            for (int i = 0; i < objData.MaterialColours.Count; i++)
+            {
+                if (objData.MaterialColours[i].Offset == offset) return i;
+            }
+            return -1;
+        }
+
+        private static int FindMaterialLogicIndex(NinjaObject objData, uint offset)
+        {
+            if (offset == 0 || objData == null || objData.MaterialLogics == null) return -1;
+            for (int i = 0; i < objData.MaterialLogics.Count; i++)
+            {
+                if (objData.MaterialLogics[i].Offset == offset) return i;
+            }
+            return -1;
+        }
+
+        private static int FindTextureMapIndex(NinjaObject objData, uint offset)
+        {
+            if (offset == 0 || objData == null || objData.TextureMaps == null) return -1;
+            for (int i = 0; i < objData.TextureMaps.Count; i++)
+            {
+                if (objData.TextureMaps[i].Offset == offset) return i;
+            }
+            return -1;
+        }
         #endregion
 
         #region Material & Texture Resolution
         private static string DetermineMaterialName(
+            NinjaObject objData,
             NinjaTextureMap texMap,
             NinjaTextureList texList,
             string modelName,
@@ -199,12 +231,31 @@ namespace SilentTools
                     return Path.GetFileNameWithoutExtension(texName);
             }
 
-            if (namingMode == MaterialNaming.ByModelAndMaterialName)
+            NinjaMaterial nMat = (objData != null && index < objData.Materials.Count) ? objData.Materials[index] : null;
+
+            int colIdx = (objData != null && nMat != null) ? FindMaterialColourIndex(objData, nMat.MaterialColourOffset) : -1;
+            int logicIdx = (objData != null && nMat != null) ? FindMaterialLogicIndex(objData, nMat.MaterialLogicOffset) : -1;
+            int texMapIdx = (objData != null && nMat != null) ? FindTextureMapIndex(objData, nMat.MaterialTexMapDescriptionOffset) : -1;
+
+            string typeStr = nMat != null ? nMat.Type.ToString().Replace("NND_MATTYPE_", "") : "Standard";
+            if (string.IsNullOrEmpty(typeStr) || typeStr == "0") typeStr = "Standard";
+            else
             {
-                return $"{modelName}_Material_{index}";
+                typeStr = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(typeStr.ToLower());
             }
 
-            return $"Material_{index}";
+            string colStr = colIdx >= 0 ? $"Col_{colIdx}" : "Col_None";
+            string logicStr = logicIdx >= 0 ? $"Logic_{logicIdx}" : "Logic_None";
+            string texMapStr = texMapIdx >= 0 ? $"TexMap_{texMapIdx}" : "TexMap_None";
+
+            string detailedName = $"{index}_{typeStr}_{colStr}_{logicStr}_{texMapStr}";
+
+            if (namingMode == MaterialNaming.ByModelAndMaterialName)
+            {
+                return $"{modelName}_{detailedName}";
+            }
+
+            return detailedName;
         }
 
         private static string GetBaseTextureName(NinjaTextureMap texMap, NinjaTextureList texList)
@@ -332,7 +383,7 @@ namespace SilentTools
                         Texture2D loadedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(candidatePath);
                         if (loadedTex != null)
                         {
-                            ctx.DependsOnSourceAsset(candidatePath);
+                            if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
                             return loadedTex;
                         }
                     }
@@ -348,7 +399,7 @@ namespace SilentTools
                     Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(foundPath);
                     if (tex != null)
                     {
-                        ctx.DependsOnSourceAsset(foundPath);
+                        if (ctx != null) ctx.DependsOnSourceAsset(foundPath);
                         return tex;
                     }
                 }
