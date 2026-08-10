@@ -75,7 +75,8 @@ namespace SilentTools.Editor
 
             string ext = Path.GetExtension(path).ToLower();
             if (ext == ".xno" || ext == ".xnm" || ext == ".xna" || ext == ".xnc" || ext == ".xnl" ||
-                ext == ".xnj" || ext == ".xnd" || ext == ".xng" || ext == ".xne" || ext == ".xni" || ext == ".xnf" || ext == ".xnv")
+                ext == ".xnj" || ext == ".xnd" || ext == ".xng" || ext == ".xne" || ext == ".xni" ||
+                ext == ".xnf" || ext == ".xnt" || ext == ".xnv" || ext == ".xnr")
             {
                 try
                 {
