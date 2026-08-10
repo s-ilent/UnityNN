@@ -53,49 +53,43 @@ namespace Marathon.Formats.Mesh.Ninja
             // Loop through and read the keyframes based on the Type flag.
             for (int i = 0; i < KeyFrameCount; i++)
             {
-                if
-                (
-                    Type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) ||
-                    Type.HasFlag(SubMotionType.NND_SMOTTYPE_SCALING_MASK)     ||
-                    Type.HasFlag(SubMotionType.NND_SMOTTYPE_AMBIENT_MASK)     ||
-                    Type.HasFlag(SubMotionType.NND_SMOTTYPE_DIFFUSE_MASK)     ||
-                    Type.HasFlag(SubMotionType.NND_SMOTTYPE_SPECULAR_MASK)    ||
-                    Type.HasFlag(SubMotionType.NND_SMOTTYPE_LIGHT_COLOR_MASK)
-                )
+                if (KeyFrameSize == 16)
                 {
                     NinjaKeyframe.NNS_MOTION_KEY_VECTOR Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_VECTOR();
                     Keyframe.Read(reader);
                     Keyframes.Add(Keyframe);
                 }
-                else if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_XYZ))
+                else if (KeyFrameSize == 8)
                 {
-                    NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16();
-                    Keyframe.Read(reader);
-                    Keyframes.Add(Keyframe);
+                    if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_XYZ))
+                    {
+                        NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16();
+                        Keyframe.Read(reader);
+                        Keyframes.Add(Keyframe);
+                    }
+                    else if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32))
+                    {
+                        NinjaKeyframe.NNS_MOTION_KEY_SINT32 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_SINT32();
+                        Keyframe.Read(reader);
+                        Keyframes.Add(Keyframe);
+                    }
+                    else
+                    {
+                        NinjaKeyframe.NNS_MOTION_KEY_FLOAT Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_FLOAT();
+                        Keyframe.Read(reader);
+                        Keyframes.Add(Keyframe);
+                    }
                 }
-
-                /* Here are some additions to try and handle sn_xxx_mizukage */
-                // NND_SMOTTYPE_FRAME_FLOAT, NND_SMOTTYPE_ANGLE_ANGLE32, NND_SMOTTYPE_ROTATION_Y
-                else if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_FLOAT) && Type.HasFlag(SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32))
-                {
-                    NinjaKeyframe.NNS_MOTION_KEY_SINT32 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_SINT32();
-                    Keyframe.Read(reader);
-                    Keyframes.Add(Keyframe);
-                }
-
-                /* (Knuxfan24): Generic Handling, these could go tits up. */
-
-                else if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_FLOAT) && KeyFrameSize == 8)
-                {
-                    NinjaKeyframe.NNS_MOTION_KEY_FLOAT Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_FLOAT();
-                    Keyframe.Read(reader);
-                    Keyframes.Add(Keyframe);
-                }
-                else if(Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_SINT16) && KeyFrameSize == 4)
+                else if (KeyFrameSize == 4)
                 {
                     NinjaKeyframe.NNS_MOTION_KEY_SINT16 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_SINT16();
                     Keyframe.Read(reader);
                     Keyframes.Add(Keyframe);
+                }
+                else if (KeyFrameSize > 0)
+                {
+                    Debug.Log(Type);
+                    reader.JumpAhead(KeyFrameSize);
                 }
                 else
                 {
