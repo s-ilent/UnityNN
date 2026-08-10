@@ -6,11 +6,12 @@ namespace SilentTools
     public enum RelFileType
     {
         Unknown,
-        SetLayout,        // set_r*.rel
+        SetLayout,        // set_r*.rel / LndSet.rel
         LndEffect,        // LndEffect.rel
         LndEnemyLight,    // LndEnemyLight.rel
         FogBank,          // FogBank.rel
         LndCommon,        // LndCommon.rel
+        StageRouteBlock,  // LndBlock.rel / LndRoute.rel
         EnemyLayout,      // enemy*.rel / enemy*.xnr
         QuestList         // filelist.rel
     }
@@ -18,7 +19,7 @@ namespace SilentTools
     public class LndLightData
     {
         public Vector3 Direction { get; set; }
-        public Color LightColor { get; set; }
+        public Color LightColor { get; set; } = Color.white;
     }
 
     public class LndGradientData
@@ -37,7 +38,7 @@ namespace SilentTools
         public float FarPlane { get; set; }
         public float InitialIntensity { get; set; }
         public float RampUp { get; set; }
-        public Color FogColor { get; set; }
+        public Color FogColor { get; set; } = Color.gray;
     }
 
     public class LndEffectData

@@ -5,37 +5,46 @@ namespace SilentTools
 {
     public static class LndEffectParser
     {
-        public static LndEffectData Parse(BinaryReaderEx reader, uint baseAddr)
+        public static LndEffectData Parse(BinaryReaderEx reader, uint fileSize)
         {
             LndEffectData data = new LndEffectData();
-            uint l1 = (uint)(reader.ReadInt32() - baseAddr);
-            uint l2 = (uint)(reader.ReadInt32() - baseAddr);
-            uint l3 = (uint)(reader.ReadInt32() - baseAddr);
-            uint gradLoc = (uint)(reader.ReadInt32() - baseAddr);
-            uint fogLoc = (uint)(reader.ReadInt32() - baseAddr);
-            uint sunLoc = (uint)(reader.ReadInt32() - baseAddr);
-            uint blurLoc = (uint)(reader.ReadInt32() - baseAddr);
+            uint l1 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint l2 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint l3 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint gradLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint fogLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint sunLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint blurLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
 
-            reader.JumpTo(l1); data.PlayerLight1 = ReadLight(reader);
-            reader.JumpTo(l2); data.PlayerLight2 = ReadLight(reader);
-            reader.JumpTo(l3); data.PlayerLightAmbient = ReadLight(reader);
+            if (l1 > 0 && l1 < fileSize) { reader.JumpTo(l1); data.PlayerLight1 = ReadLight(reader); }
+            if (l2 > 0 && l2 < fileSize) { reader.JumpTo(l2); data.PlayerLight2 = ReadLight(reader); }
+            if (l3 > 0 && l3 < fileSize) { reader.JumpTo(l3); data.PlayerLightAmbient = ReadLight(reader); }
 
-            reader.JumpTo(gradLoc);
-            data.TopGradient = ReadGradient(reader);
-            data.BottomGradient = ReadGradient(reader);
+            if (gradLoc > 0 && gradLoc < fileSize)
+            {
+                reader.JumpTo(gradLoc);
+                data.TopGradient = ReadGradient(reader);
+                data.BottomGradient = ReadGradient(reader);
+            }
 
-            reader.JumpTo(fogLoc); data.Fog = ReadFog(reader);
+            if (fogLoc > 0 && fogLoc < fileSize) { reader.JumpTo(fogLoc); data.Fog = ReadFog(reader); }
 
-            reader.JumpTo(sunLoc);
-            data.SunPosition = reader.ReadVector3();
-            data.SunUnknown = reader.ReadSingle();
+            if (sunLoc > 0 && sunLoc < fileSize)
+            {
+                reader.JumpTo(sunLoc);
+                data.SunPosition = reader.ReadVector3();
+                data.SunUnknown = reader.ReadSingle();
+            }
 
-            reader.JumpTo(blurLoc);
-            data.BlurStartDistance = reader.ReadSingle();
-            data.BlurUnknown = reader.ReadSingle();
-            data.BlurPixelCount = reader.ReadInt32();
-            data.BlurDistance = reader.ReadSingle();
-            data.BlurOpacity = reader.ReadSingle();
+            if (blurLoc > 0 && blurLoc < fileSize)
+            {
+                reader.JumpTo(blurLoc);
+                data.BlurStartDistance = reader.ReadSingle();
+                data.BlurUnknown = reader.ReadSingle();
+                data.BlurPixelCount = reader.ReadInt32();
+                data.BlurDistance = reader.ReadSingle();
+                data.BlurOpacity = reader.ReadSingle();
+            }
 
             return data;
         }

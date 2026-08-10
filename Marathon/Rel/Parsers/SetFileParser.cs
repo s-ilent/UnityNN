@@ -1,27 +1,29 @@
-using System.Collections.Generic;
+using System;
 using Marathon.IO;
 
 namespace SilentTools
 {
     public static class SetFileParser
     {
-        public static SetFileData Parse(BinaryReaderEx reader, uint baseAddr)
+        public static SetFileData Parse(BinaryReaderEx reader, uint fileSize)
         {
             SetFileData data = new SetFileData();
             data.AreaID = reader.ReadInt16();
             short mapCount = reader.ReadInt16();
-            uint mainListPointer = (uint)(reader.ReadInt32() - baseAddr);
+            uint mainListPointer = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
 
             for (int i = 0; i < mapCount; i++)
             {
+                if (mainListPointer + i * 12 >= fileSize) break;
                 reader.JumpTo(mainListPointer + i * 12);
                 SetMapListing map = new SetMapListing();
                 map.MapNumber = reader.ReadInt16();
                 short listCount = reader.ReadInt16();
-                uint listPtr = (uint)(reader.ReadInt32() - baseAddr);
+                uint listPtr = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
 
                 for (int j = 0; j < listCount; j++)
                 {
+                    if (listPtr + j * 0x28 >= fileSize) break;
                     reader.JumpTo(listPtr + j * 0x28);
                     SetListHeader header = new SetListHeader();
                     header.UnusedInt1 = reader.ReadInt32();
@@ -33,10 +35,11 @@ namespace SilentTools
                     header.UnknownPairedShort1 = reader.ReadInt16();
                     header.UnknownPairedShort2 = reader.ReadInt16();
                     short listEntryCount = reader.ReadInt16();
-                    uint objectListLoc = (uint)(reader.ReadInt32() - baseAddr);
+                    uint objectListLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
 
                     for (int k = 0; k < listEntryCount; k++)
                     {
+                        if (objectListLoc + k * 0x34 >= fileSize) break;
                         reader.JumpTo(objectListLoc + k * 0x34);
                         SetObjectEntry obj = new SetObjectEntry();
                         obj.HeaderInt1 = reader.ReadInt32();
@@ -48,12 +51,12 @@ namespace SilentTools
                         obj.Position = reader.ReadVector3();
                         obj.Rotation = reader.ReadVector3();
                         int metadataLength = reader.ReadInt32();
-                        uint metadataLoc = (uint)(reader.ReadInt32() - baseAddr);
+                        uint metadataLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
 
                         if (metadataLength > 0 && metadataLoc < reader.BaseStream.Length)
                         {
                             reader.JumpTo(metadataLoc);
-                            obj.Metadata = reader.ReadBytes(metadataLength);
+                            obj.Metadata = reader.ReadBytes(Math.Min(metadataLength, (int)(reader.BaseStream.Length - metadataLoc)));
                         }
 
                         header.Objects.Add(obj);
