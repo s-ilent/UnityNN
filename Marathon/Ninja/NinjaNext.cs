@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using Marathon.IO;
 using System.IO;
-using System;
 
 namespace Marathon.Formats.Mesh.Ninja
 {
@@ -58,6 +57,16 @@ namespace Marathon.Formats.Mesh.Ninja
 
             uint chunkSize = reader.ReadUInt32();
             uint dataChunkCount = reader.ReadUInt32();
+
+            // Auto-detect Big Endian vs Little Endian
+            if ((chunkSize & 0xFF000000) != 0 || dataChunkCount > 0xFFFF)
+            {
+                reader.IsBigEndian = true;
+                reader.JumpTo(headerStartPos + 4);
+                chunkSize = reader.ReadUInt32();
+                dataChunkCount = reader.ReadUInt32();
+            }
+
             uint dataOffset = reader.ReadUInt32();
             uint dataSize = reader.ReadUInt32();
             uint NOF0Offset = reader.ReadUInt32();

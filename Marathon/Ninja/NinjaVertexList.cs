@@ -51,50 +51,51 @@ namespace Marathon.Formats.Mesh.Ninja
             reader.JumpTo(VertexListOffset, true);
             for (int i = 0; i < VertexCount; i++)
             {
+                long vertexStartPos = reader.BaseStream.Position;
                 NinjaVertex Vertex = new NinjaVertex();
 
                 // Read different elements depending on the Format flag.
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_POSITION) != 0)
+                    Vertex.Position = reader.ReadVector3();
+
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_WEIGHT3) != 0)
+                    Vertex.Weight = reader.ReadVector3();
+
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_MTX_INDEX4) != 0)
+                    Vertex.MatrixIndices = reader.ReadBytes(4);
+
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_NORMAL) != 0)
+                    Vertex.Normals = reader.ReadVector3();
+
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_COLOR) != 0)
+                    Vertex.VertexColours = reader.ReadBytes(4);
+
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_COLOR2) != 0)
+                    Vertex.VertexColours2 = reader.ReadBytes(4);
+
+                // Knuxfan24: I don't know why this works, but it does.
+                uint texCount = ((uint)Format >> 16) & 0x0F;
+                for (int t = 0; t < texCount; t++)
                 {
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_POSITION))
-                        Vertex.Position = reader.ReadVector3();
+                    if (Vertex.TextureCoordinates == null)
+                        Vertex.TextureCoordinates = new List<Vector2>();
 
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_WEIGHT3))
-                        Vertex.Weight = reader.ReadVector3();
-
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_MTX_INDEX4))
-                        Vertex.MatrixIndices = reader.ReadBytes(4);
-
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_NORMAL))
-                        Vertex.Normals = reader.ReadVector3();
-
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_COLOR))
-                        Vertex.VertexColours = reader.ReadBytes(4);
-
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_COLOR2))
-                        Vertex.VertexColours2 = reader.ReadBytes(4);
-
-                    // Knuxfan24: I don't know why this works, but it does.
-                    for (int t = 0; t < ((uint)Format / (uint)XboxVertexType.NND_VTXTYPE_XB_TEXCOORD); t++)
-                    {
-                        // Actually create the Texture Coordinates list if it doesn't exist already.
-                        if (Vertex.TextureCoordinates == null)
-                            Vertex.TextureCoordinates = new List<Vector2>();
-
-                        Vertex.TextureCoordinates.Add(reader.ReadVector2());
-                    }
-
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_TANGENT))
-                        Vertex.Tangent = reader.ReadVector3();
-
-                    if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_BINORMAL))
-                        Vertex.Binormals = reader.ReadVector3();
+                    Vertex.TextureCoordinates.Add(reader.ReadVector2());
                 }
 
-                // Save this vertex.
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_TANGENT) != 0)
+                    Vertex.Tangent = reader.ReadVector3();
+
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_BINORMAL) != 0)
+                    Vertex.Binormals = reader.ReadVector3();
+
                 Vertices.Add(Vertex);
+
+                // Enforce exact byte stride per vertex to prevent stream desynchronization
+                if (DataSize > 0)
+                    reader.JumpTo(vertexStartPos + DataSize);
             }
 
-            // Jump to and read the Bone Matrix Indices for this Vertex List.
             reader.JumpTo(BoneMatrixIndicesOffset, true);
             for (int i = 0; i < BoneCount; i++)
                 BoneMatrixIndices.Add(reader.ReadInt32());
@@ -108,34 +109,25 @@ namespace Marathon.Formats.Mesh.Ninja
         /// <param name="ObjectOffsets">The list of offsets this Object chunk uses.</param>
         public void Write(BinaryWriterEx writer, int index, Dictionary<string, uint> ObjectOffsets)
         {
-            // Calculate the Data Size based on the Format flag.
             uint dataSize = 0;
             {
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_POSITION))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_POSITION) != 0) 
                     dataSize += 12;
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_WEIGHT3))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_WEIGHT3) != 0) 
                     dataSize += 12;
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_MTX_INDEX4))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_MTX_INDEX4) != 0) 
                     dataSize += 4;
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_NORMAL))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_NORMAL) != 0) 
                     dataSize += 12;
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_COLOR))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_COLOR) != 0) 
                     dataSize += 4;
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_COLOR2))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_COLOR2) != 0) 
                     dataSize += 4;
-
-                if (Vertices[0].TextureCoordinates != null)
+                if (Vertices.Count > 0 && Vertices[0].TextureCoordinates != null)
                     dataSize += (uint)(8 * Vertices[0].TextureCoordinates.Count);
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_TANGENT))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_TANGENT) != 0) 
                     dataSize += 12;
-
-                if (Format.HasFlag(XboxVertexType.NND_VTXTYPE_XB_BINORMAL))
+                if ((Format & XboxVertexType.NND_VTXTYPE_XB_BINORMAL) != 0) 
                     dataSize += 12;
             }
 
