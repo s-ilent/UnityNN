@@ -75,6 +75,11 @@ namespace SilentTools.Editor
                 {
                     m_LoadedNinjaData = new NinjaNext();
                     m_LoadedNinjaData.Load(path);
+                    
+                    if (m_LoadedNinjaData.Data != null && m_LoadedNinjaData.Data.TextureList == null)
+                    {
+                        m_LoadedNinjaData.Data.TextureList = NinjaMaterialResolver.ResolveTextureList(null, path);
+                    }
                 }
                 catch (System.Exception ex)
                 {
