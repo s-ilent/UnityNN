@@ -8,7 +8,8 @@
 // --------------------------------------------------------------------------
 // Uniform Properties (_SpecColor is provided by Lighting.cginc)
 // --------------------------------------------------------------------------
-fixed4 _Color;
+half4 _Color;
+half4 _AmbientColor;
 sampler2D _MainTex;
 float4 _MainTex_ST;
 
@@ -18,6 +19,7 @@ float _Cutoff;
 float _AlphaToMask;
 
 float _VertexColorScale;
+float _HDRIntensity;
 
 // Multi-Texture (TexMaps)
 sampler2D _MainTex2;
@@ -31,7 +33,7 @@ float _MainTex3BlendMode;
 // Matcap
 float _UseMatcap;
 sampler2D _MatcapTex;
-fixed4 _MatcapColor;
+half4 _MatcapColor;
 float _MatcapMode; // 0: Multiply, 1: Add, 2: Replace
 
 // Normal Mapping
@@ -44,7 +46,7 @@ float _Shininess;
 sampler2D _SpecGlossMap;
 
 // Emission
-fixed4 _EmissionColor;
+half4 _EmissionColor;
 sampler2D _EmissionMap;
 float4 _EmissionMap_ST;
 float _EmissionPower;
@@ -86,7 +88,7 @@ struct appdata_nn
     float3 normal   : NORMAL;
     float4 texcoord : TEXCOORD0;
     float4 texcoord1: TEXCOORD1;
-    fixed4 color    : COLOR;
+    half4 color    : COLOR;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
 
@@ -97,7 +99,7 @@ struct v2f_nn
     float4 uv1          : TEXCOORD1; // xy: MainTex3, zw: BumpMap
     float3 worldPos     : TEXCOORD2;
     float3 worldNormal  : TEXCOORD3;
-    fixed4 color        : COLOR;
+    half4 color        : COLOR;
     UNITY_SHADOW_COORDS(4)
     UNITY_VERTEX_INPUT_INSTANCE_ID
     UNITY_VERTEX_OUTPUT_STEREO
@@ -140,7 +142,6 @@ v2f_nn vert_nn(appdata_nn v)
     o.uv1.xy = TRANSFORM_TEX(v.texcoord.xy, _MainTex3);
     o.uv1.zw = TRANSFORM_TEX(v.texcoord.xy, _BumpMap);
 
-    // Vertex color is always multiplied by default
     o.color = v.color;
 
     UNITY_TRANSFER_SHADOW(o, v.texcoord1);
@@ -155,21 +156,36 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     MaterialInputs material;
     initMaterial(material);
 
-    // 1. Primary Surface & Vertex Color with Multiplier for baked-in vertex lighting / ambient
-    fixed4 mainTex = tex2D(_MainTex, i.uv0.xy);
-    fixed4 vcolor = i.color;
+    // 1. Primary Surface with PSU Gamma-Space Colour Application & Doubling
+    half4 mainTex = tex2D(_MainTex, i.uv0.xy);
+    half4 vcolor = i.color;
     vcolor.rgb *= _VertexColorScale;
-    material.baseColor = mainTex * _Color * vcolor;
+
+    // Convert texture * material diffuse to gamma space for vertex color multiplication
+    float3 linearToGamma = LinearToGammaSpace((mainTex * _Color).rgb);
+    float3 gammaToLinear = GammaToLinearSpace((float4(linearToGamma, 0.0) * vcolor).rgb);
+
+#ifdef UNITY_HDR_ON
+    float4 colorSpaceMult = unity_ColorSpaceDouble;
+#else
+    float4 colorSpaceMult = float4(1.0, 1.0, 1.0, 1.0);
+#endif
+
+    float hdrMult = _HDRIntensity * _EmissionPower;
+    if (hdrMult <= 0.0) hdrMult = 1.0;
+
+    float4 fullColorAlpha = (mainTex * _Color * vcolor);
+    material.baseColor = float4(gammaToLinear * colorSpaceMult.rgb * hdrMult, fullColorAlpha.a);
 
     // 2. Multi-Texture Layers (TexMaps)
     if (_MainTex2BlendMode > 0.5)
     {
-        fixed4 tex2 = tex2D(_MainTex2, i.uv0.zw);
+        half4 tex2 = tex2D(_MainTex2, i.uv0.zw);
         material.baseColor.rgb = ApplyTextureBlend(material.baseColor.rgb, tex2, _MainTex2BlendMode);
     }
     if (_MainTex3BlendMode > 0.5)
     {
-        fixed4 tex3 = tex2D(_MainTex3, i.uv1.xy);
+        half4 tex3 = tex2D(_MainTex3, i.uv1.xy);
         material.baseColor.rgb = ApplyTextureBlend(material.baseColor.rgb, tex3, _MainTex3BlendMode);
     }
 
@@ -185,7 +201,7 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     }
     material.normal = N;
 
-    // 4. Matcap Application (Applies directly to main texture)
+    // 4. Matcap Application
     if (_UseMatcap > 0.5)
     {
         float3 viewNormal = mul((float3x3)UNITY_MATRIX_IT_MV, N);
@@ -202,10 +218,10 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
 
     // 5. Specular Map & Shininess
     material.smoothness = _Shininess;
-    fixed4 specTex = tex2D(_SpecGlossMap, i.uv0.xy);
+    half4 specTex = tex2D(_SpecGlossMap, i.uv0.xy);
     material.specularColor = _SpecColor.rgb * specTex.rgb;
 
-    // 6. Emission & Emission Multiplier for HDR
+    // 6. Emission
     float maxEmisColor = max(_EmissionColor.r, max(_EmissionColor.g, _EmissionColor.b));
     if (maxEmisColor > 0.001 || _EmissionPower > 1.0)
     {
@@ -221,7 +237,6 @@ void applyAlphaMask(inout half4 baseColor)
     {
         if (_AlphaToMask > 0.5)
         {
-            // MSAA Alpha-to-Coverage edge sharpening without discarding pixels via clip()
             baseColor.a = saturate((baseColor.a - _Cutoff) / max(fwidth(baseColor.a), 0.0001) + 0.5);
         }
         else
@@ -234,7 +249,7 @@ void applyAlphaMask(inout half4 baseColor)
 // --------------------------------------------------------------------------
 // Consolidated Fragment Lighting
 // --------------------------------------------------------------------------
-fixed4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
+half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 {
     UNITY_SETUP_INSTANCE_ID(i);
 
@@ -246,9 +261,9 @@ fixed4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     {
         if (isForwardAdd)
         {
-            return fixed4(0, 0, 0, material.baseColor.a);
+            return half4(0, 0, 0, material.baseColor.a);
         }
-        return fixed4(material.baseColor.rgb + material.emissive, material.baseColor.a);
+        return half4(16.0 * material.baseColor.rgb + material.emissive, material.baseColor.a);
     }
 
     ShadingParams shading = (ShadingParams)0;
@@ -262,7 +277,9 @@ fixed4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 
     float3 L = normalize(UnityWorldSpaceLightDir(shading.position));
     float NdotL = max(0.0, dot(shading.normal, L));
-    half3 diffuse = _LightColor0.rgb * NdotL * shading.attenuation;
+    half3 diffuse = UNITY_PI * _LightColor0.rgb;
+    // Todo: Apply lighting to meshes with normals, but only apply color to meshes without.
+    // * NdotL * shading.attenuation;
 
     half3 specular = half3(0, 0, 0);
     if (material.smoothness > 0.0)
@@ -275,21 +292,21 @@ fixed4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 
     if (isForwardAdd)
     {
-        return fixed4(material.baseColor.rgb * diffuse + specular, material.baseColor.a);
+        return half4(material.baseColor.rgb * diffuse + specular, material.baseColor.a);
     }
 
-    half3 ambient = ShadeSH9(half4(shading.normal, 1.0));
+    half3 ambient = ShadeSH9(half4(shading.normal, 1.0)) * _AmbientColor.rgb;
     half3 finalRGB = material.baseColor.rgb * (ambient + diffuse) + specular + material.emissive;
 
-    return fixed4(finalRGB, material.baseColor.a);
+    return half4(finalRGB, material.baseColor.a);
 }
 
-fixed4 fragBase(v2f_nn i, bool isFrontFace : SV_IsFrontFace) : SV_Target
+half4 fragBase(v2f_nn i, bool isFrontFace : SV_IsFrontFace) : SV_Target
 {
     return FragNNCommon(i, isFrontFace, false);
 }
 
-fixed4 fragAdd(v2f_nn i, bool isFrontFace : SV_IsFrontFace) : SV_Target
+half4 fragAdd(v2f_nn i, bool isFrontFace : SV_IsFrontFace) : SV_Target
 {
     return FragNNCommon(i, isFrontFace, true);
 }

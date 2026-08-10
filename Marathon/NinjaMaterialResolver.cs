@@ -301,7 +301,7 @@ namespace SilentTools
                         case 1: return UnityEngine.Rendering.CompareFunction.Never;
                         case 2: return UnityEngine.Rendering.CompareFunction.Less;
                         case 3: return UnityEngine.Rendering.CompareFunction.Equal;
-                        case 4: return UnityEngine.Rendering.CompareFunction.Equal;
+                        case 4: return UnityEngine.Rendering.CompareFunction.LessEqual;
                         case 5: return UnityEngine.Rendering.CompareFunction.Greater;
                         case 6: return UnityEngine.Rendering.CompareFunction.NotEqual;
                         case 7: return UnityEngine.Rendering.CompareFunction.GreaterEqual;
@@ -382,15 +382,18 @@ namespace SilentTools
         {
             Material mat = new Material(shader) { name = matName };
 
-            // Default material property values
+            // Default property initializations
             mat.SetFloat("_EmissionPower", 1.0f);
+            mat.SetFloat("_HDRIntensity", 1.0f);
             mat.SetFloat("_VertexColorScale", 1.0f);
             mat.SetFloat("_AlphaToMask", 0.0f);
             mat.SetFloat("_Unlit", 0.0f);
 
+            // Import Material Colours (Diffuse, Ambient, Specular, Emissive) & Power
             if (matColour != null)
             {
                 mat.SetColor("_Color", matColour.Diffuse);
+                mat.SetColor("_AmbientColor", matColour.Ambient);
                 mat.SetColor("_SpecColor", matColour.Specular);
                 mat.SetColor("_EmissionColor", matColour.Emissive);
                 mat.SetFloat("_Shininess", Mathf.Clamp01(matColour.Power / 100.0f));
@@ -474,40 +477,50 @@ namespace SilentTools
                     mat.SetFloat("_AlphaTest", 0.0f);
                 }
 
-                // Detect additive glow unlit effect logic (SRCBlend=One & DSTBlend=One)
                 bool isAdditiveGlow = (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.One);
                 if (isAdditiveGlow)
                 {
                     mat.SetFloat("_Unlit", 1.0f);
                 }
 
-                // Map Ninja Material Logic state to preset mode enum & update tags, queues and pass states
-                if (!matLogic.Blend && !matLogic.Alpha)
+                // Sega NN format transparency heuristic:
+                // ZUpdate == true (ZWrite On) indicates solid geometry
+                bool isZWriteOn = matLogic.ZUpdate;
+                bool isAlphaTest = matLogic.Alpha && matLogic.AlphaRef > 0;
+                bool isOpaqueBlendMode = (!matLogic.Blend) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.Zero);
+
+                if (!matLogic.Blend || isOpaqueBlendMode || isZWriteOn)
                 {
-                    mat.SetFloat("_Mode", 0.0f); // Opaque
-                    mat.SetOverrideTag("RenderType", "Opaque");
-                    mat.SetOverrideTag("Queue", "Geometry");
-                    mat.SetOverrideTag("IgnoreProjector", "False");
-                    mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry;
-                    mat.SetShaderPassEnabled("ShadowCaster", true);
-                    mat.SetShaderPassEnabled("DepthOnly", true);
+                    if (isAlphaTest)
+                    {
+                        mat.SetFloat("_Mode", 1.0f); // Cutout
+                        mat.SetOverrideTag("RenderType", "TransparentCutout");
+                        mat.SetOverrideTag("Queue", "AlphaTest");
+                        mat.SetOverrideTag("IgnoreProjector", "True");
+                        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+                        mat.SetFloat("_CustomRenderQueue", (float)mat.renderQueue);
+                        mat.SetShaderPassEnabled("ShadowCaster", true);
+                        mat.SetShaderPassEnabled("DepthOnly", true);
+                    }
+                    else
+                    {
+                        mat.SetFloat("_Mode", 0.0f); // Opaque
+                        mat.SetOverrideTag("RenderType", "Opaque");
+                        mat.SetOverrideTag("Queue", "Geometry");
+                        mat.SetOverrideTag("IgnoreProjector", "False");
+                        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry;
+                        mat.SetFloat("_CustomRenderQueue", (float)mat.renderQueue);
+                        mat.SetShaderPassEnabled("ShadowCaster", true);
+                        mat.SetShaderPassEnabled("DepthOnly", true);
+                    }
                 }
-                else if (matLogic.Alpha && !matLogic.Blend)
-                {
-                    mat.SetFloat("_Mode", 1.0f); // Cutout
-                    mat.SetOverrideTag("RenderType", "TransparentCutout");
-                    mat.SetOverrideTag("Queue", "AlphaTest");
-                    mat.SetOverrideTag("IgnoreProjector", "True");
-                    mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
-                    mat.SetShaderPassEnabled("ShadowCaster", true);
-                    mat.SetShaderPassEnabled("DepthOnly", true);
-                }
-                else if (matLogic.Blend)
+                else // ZUpdate == false (ZWrite Off) & Blend == true -> True Transparent / Blended Mesh
                 {
                     mat.SetOverrideTag("RenderType", "Transparent");
                     mat.SetOverrideTag("Queue", "Transparent");
                     mat.SetOverrideTag("IgnoreProjector", "True");
                     mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+                    mat.SetFloat("_CustomRenderQueue", (float)mat.renderQueue);
                     mat.SetShaderPassEnabled("ShadowCaster", false);
                     mat.SetShaderPassEnabled("DepthOnly", false);
 

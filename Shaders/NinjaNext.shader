@@ -2,15 +2,15 @@ Shader "NinjaNext/Standard"
 {
     Properties
     {
-        // Render Pipeline State Controls with Enums
+        // Render Pipeline State Controls
         _Mode ("Rendering Mode", Float) = 0.0
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Source Blend", Float) = 1.0
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend ("Destination Blend", Float) = 0.0
         [Enum(UnityEngine.Rendering.BlendOp)] _BlendOp ("Blend Operation", Float) = 0.0
         [Enum(Off,0,On,1)] _ZWrite ("Depth Write", Float) = 1.0
         [Enum(UnityEngine.Rendering.CompareFunction)] _ZTest ("Depth Test", Float) = 4.0
-        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2.0
-        _QueueOffset ("Queue Offset / Custom Queue", Float) = 0.0
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 0.0
+        [Queue]_CustomRenderQueue ("Custom Render Queue", Float) = -1.0
 
         // Lighting Mode
         [ToggleUI] _Unlit ("Unlit (Disable Lighting)", Float) = 0.0
@@ -20,8 +20,10 @@ Shader "NinjaNext/Standard"
         _Cutoff ("Alpha Cutoff", Range(0, 1)) = 0.5
         [ToggleUI] _AlphaToMask ("Alpha to Coverage", Float) = 0.0
         _Color ("Main Color", Color) = (1,1,1,1)
+        _AmbientColor ("Ambient Color", Color) = (1,1,1,1)
         _MainTex ("Base (RGB) Alpha (A)", 2D) = "white" {}
         _VertexColorScale ("Vertex Color Ambient Multiplier", Float) = 1.0
+        _HDRIntensity ("HDR Intensity", Float) = 1.0
 
         // Matcap
         _UseMatcap ("Enable Matcap", Float) = 0.0
@@ -55,13 +57,10 @@ Shader "NinjaNext/Standard"
 
     SubShader
     {
-        Tags { "RenderType"="Opaque" "Queue"="Geometry" }
+        Tags { "RenderType"="Opaque" }
         LOD 200
         Cull [_Cull]
 
-        // ------------------------------------------------------------------
-        // Forward Base Pass
-        // ------------------------------------------------------------------
         Pass
         {
             Name "FORWARD"
@@ -76,7 +75,7 @@ Shader "NinjaNext/Standard"
             CGPROGRAM
             #pragma vertex vert_nn
             #pragma fragment fragBase
-            #pragma target 3.0
+            #pragma target 4.0
 
             #pragma multi_compile_fwdbase
             #pragma multi_compile_fog
@@ -86,9 +85,6 @@ Shader "NinjaNext/Standard"
             ENDCG
         }
 
-        // ------------------------------------------------------------------
-        // Forward Add Pass (Dynamic Point / Spot Lights)
-        // ------------------------------------------------------------------
         Pass
         {
             Name "FORWARD_DELTA"
@@ -103,7 +99,7 @@ Shader "NinjaNext/Standard"
             CGPROGRAM
             #pragma vertex vert_nn
             #pragma fragment fragAdd
-            #pragma target 3.0
+            #pragma target 4.0
 
             #pragma multi_compile_fwdadd_fullshadows
             #pragma multi_compile_fog
@@ -112,9 +108,6 @@ Shader "NinjaNext/Standard"
             ENDCG
         }
 
-        // ------------------------------------------------------------------
-        // Shadow Caster Pass
-        // ------------------------------------------------------------------
         Pass
         {
             Name "ShadowCaster"
@@ -125,7 +118,7 @@ Shader "NinjaNext/Standard"
             CGPROGRAM
             #pragma vertex vertShadowCaster
             #pragma fragment fragShadowCaster
-            #pragma target 3.0
+            #pragma target 4.0
 
             #pragma multi_compile_shadowcaster
 
@@ -137,7 +130,7 @@ Shader "NinjaNext/Standard"
                 float2 uv : TEXCOORD1;
             };
 
-            fixed4 _Color;
+            half4 _Color;
             sampler2D _MainTex;
             float4 _MainTex_ST;
             float _AlphaTest;
@@ -153,7 +146,7 @@ Shader "NinjaNext/Standard"
 
             float4 fragShadowCaster(v2f_shadow i) : SV_Target
             {
-                fixed4 col = tex2D(_MainTex, i.uv) * _Color;
+                half4 col = tex2D(_MainTex, i.uv) * _Color;
                 if (_AlphaTest > 0.5)
                 {
                     clip(col.a - _Cutoff);
@@ -163,9 +156,6 @@ Shader "NinjaNext/Standard"
             ENDCG
         }
 
-        // ------------------------------------------------------------------
-        // Depth-Only Pass
-        // ------------------------------------------------------------------
         Pass
         {
             Name "DepthOnly"
@@ -177,7 +167,7 @@ Shader "NinjaNext/Standard"
             CGPROGRAM
             #pragma vertex vertDepth
             #pragma fragment fragDepth
-            #pragma target 3.0
+            #pragma target 4.0
 
             #include "UnityCG.cginc"
 
@@ -187,7 +177,7 @@ Shader "NinjaNext/Standard"
                 float2 uv : TEXCOORD0;
             };
 
-            fixed4 _Color;
+            half4 _Color;
             sampler2D _MainTex;
             float4 _MainTex_ST;
             float _AlphaTest;
@@ -201,9 +191,9 @@ Shader "NinjaNext/Standard"
                 return o;
             }
 
-            fixed4 fragDepth(v2f_depth i) : SV_Target
+            half4 fragDepth(v2f_depth i) : SV_Target
             {
-                fixed4 col = tex2D(_MainTex, i.uv) * _Color;
+                half4 col = tex2D(_MainTex, i.uv) * _Color;
                 if (_AlphaTest > 0.5)
                 {
                     clip(col.a - _Cutoff);

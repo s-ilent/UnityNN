@@ -17,7 +17,6 @@ namespace SilentTools
             Custom
         }
 
-        // Material Properties
         private MaterialProperty modeProp;
         private MaterialProperty srcBlendProp;
         private MaterialProperty dstBlendProp;
@@ -25,7 +24,7 @@ namespace SilentTools
         private MaterialProperty zWriteProp;
         private MaterialProperty zTestProp;
         private MaterialProperty cullProp;
-        private MaterialProperty queueOffsetProp;
+        private MaterialProperty customRenderQueueProp;
 
         private MaterialProperty unlitProp;
 
@@ -34,8 +33,10 @@ namespace SilentTools
         private MaterialProperty alphaToMaskProp;
 
         private MaterialProperty colorProp;
+        private MaterialProperty ambientColorProp;
         private MaterialProperty mainTexProp;
         private MaterialProperty vertexColorScaleProp;
+        private MaterialProperty hdrIntensityProp;
 
         private MaterialProperty useMatcapProp;
         private MaterialProperty matcapTexProp;
@@ -67,7 +68,7 @@ namespace SilentTools
             zWriteProp = FindProperty("_ZWrite", props, false);
             zTestProp = FindProperty("_ZTest", props, false);
             cullProp = FindProperty("_Cull", props, false);
-            queueOffsetProp = FindProperty("_QueueOffset", props, false);
+            customRenderQueueProp = FindProperty("_CustomRenderQueue", props, false);
 
             unlitProp = FindProperty("_Unlit", props, false);
 
@@ -76,8 +77,10 @@ namespace SilentTools
             alphaToMaskProp = FindProperty("_AlphaToMask", props, false);
 
             colorProp = FindProperty("_Color", props, false);
+            ambientColorProp = FindProperty("_AmbientColor", props, false);
             mainTexProp = FindProperty("_MainTex", props, false);
             vertexColorScaleProp = FindProperty("_VertexColorScale", props, false);
+            hdrIntensityProp = FindProperty("_HDRIntensity", props, false);
 
             useMatcapProp = FindProperty("_UseMatcap", props, false);
             matcapTexProp = FindProperty("_MatcapTex", props, false);
@@ -131,14 +134,23 @@ namespace SilentTools
                 if (zTestProp != null) materialEditor.ShaderProperty(zTestProp, "Depth Test (_ZTest)");
                 if (cullProp != null) materialEditor.ShaderProperty(cullProp, "Cull Mode");
 
-                // Render Queue Control
-                EditorGUI.BeginChangeCheck();
-                int newQueue = EditorGUILayout.IntField("Render Queue", material.renderQueue);
-                if (EditorGUI.EndChangeCheck())
+                if (customRenderQueueProp != null)
                 {
-                    materialEditor.RegisterPropertyChangeUndo("Render Queue");
-                    material.renderQueue = newQueue;
-                    if (queueOffsetProp != null) queueOffsetProp.floatValue = newQueue;
+                    materialEditor.ShaderProperty(customRenderQueueProp, "Custom Render Queue");
+                    if (customRenderQueueProp.floatValue >= 0)
+                    {
+                        material.renderQueue = (int)customRenderQueueProp.floatValue;
+                    }
+                }
+                else
+                {
+                    EditorGUI.BeginChangeCheck();
+                    int newQueue = EditorGUILayout.IntField("Render Queue", material.renderQueue);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        materialEditor.RegisterPropertyChangeUndo("Render Queue");
+                        material.renderQueue = newQueue;
+                    }
                 }
 
                 EditorGUI.indentLevel--;
@@ -150,12 +162,17 @@ namespace SilentTools
             if (mainTexProp != null && colorProp != null)
             {
                 materialEditor.TexturePropertySingleLine(new GUIContent("Main Texture"), mainTexProp, colorProp);
+                if (ambientColorProp != null) materialEditor.ShaderProperty(ambientColorProp, "Ambient Color");
                 materialEditor.TextureScaleOffsetProperty(mainTexProp);
             }
 
             if (vertexColorScaleProp != null)
             {
                 materialEditor.ShaderProperty(vertexColorScaleProp, "Vertex Color Multiplier");
+            }
+            if (hdrIntensityProp != null)
+            {
+                materialEditor.ShaderProperty(hdrIntensityProp, "HDR Intensity");
             }
 
             if (alphaTestProp != null)
@@ -269,6 +286,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.Add);
                     material.SetInt("_ZWrite", 1);
                     material.SetFloat("_AlphaTest", 0.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", -1.0f);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry;
                     material.SetShaderPassEnabled("ShadowCaster", true);
                     material.SetShaderPassEnabled("DepthOnly", true);
@@ -283,6 +301,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.Add);
                     material.SetInt("_ZWrite", 1);
                     material.SetFloat("_AlphaTest", 1.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", (float)UnityEngine.Rendering.RenderQueue.AlphaTest);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
                     material.SetShaderPassEnabled("ShadowCaster", true);
                     material.SetShaderPassEnabled("DepthOnly", true);
@@ -297,6 +316,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.Add);
                     material.SetInt("_ZWrite", 0);
                     material.SetFloat("_AlphaTest", 0.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", (float)UnityEngine.Rendering.RenderQueue.Transparent);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
                     material.SetShaderPassEnabled("ShadowCaster", false);
                     material.SetShaderPassEnabled("DepthOnly", false);
@@ -311,6 +331,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.Add);
                     material.SetInt("_ZWrite", 0);
                     material.SetFloat("_AlphaTest", 0.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", (float)UnityEngine.Rendering.RenderQueue.Transparent);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
                     material.SetShaderPassEnabled("ShadowCaster", false);
                     material.SetShaderPassEnabled("DepthOnly", false);
@@ -325,6 +346,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.Add);
                     material.SetInt("_ZWrite", 0);
                     material.SetFloat("_AlphaTest", 0.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", (float)UnityEngine.Rendering.RenderQueue.Transparent);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
                     material.SetShaderPassEnabled("ShadowCaster", false);
                     material.SetShaderPassEnabled("DepthOnly", false);
@@ -339,6 +361,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.Add);
                     material.SetInt("_ZWrite", 0);
                     material.SetFloat("_AlphaTest", 0.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", (float)UnityEngine.Rendering.RenderQueue.Transparent);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
                     material.SetShaderPassEnabled("ShadowCaster", false);
                     material.SetShaderPassEnabled("DepthOnly", false);
@@ -353,6 +376,7 @@ namespace SilentTools
                     material.SetInt("_BlendOp", (int)UnityEngine.Rendering.BlendOp.ReverseSubtract);
                     material.SetInt("_ZWrite", 0);
                     material.SetFloat("_AlphaTest", 0.0f);
+                    if (material.HasProperty("_CustomRenderQueue")) material.SetFloat("_CustomRenderQueue", (float)UnityEngine.Rendering.RenderQueue.Transparent);
                     material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
                     material.SetShaderPassEnabled("ShadowCaster", false);
                     material.SetShaderPassEnabled("DepthOnly", false);
