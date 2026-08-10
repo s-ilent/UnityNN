@@ -27,13 +27,21 @@ namespace SilentTools
                 return;
             }
 
-            if (loader.Data.Motion == null) return;
+            NinjaMotion mot = loader.Data.Motion ?? loader.Data.MaterialMotion;
+            if (mot == null) return;
+
+            string[] targets = m_nodeHierarchyTarget;
+            if (targets == null || targets.Length == 0)
+            {
+                // Resolve target node names from associated .xna / .xnn / .xnj / .xno file
+                targets = NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx);
+            }
 
             AnimationClip clip = NinjaMotionResolver.ResolveMotion(
-                loader.Data.Motion,
+                mot,
                 shortName,
                 m_Scale,
-                m_nodeHierarchyTarget
+                targets
             );
 
             ctx.AddObjectToAsset("main", clip);

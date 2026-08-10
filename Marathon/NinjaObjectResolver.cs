@@ -20,14 +20,18 @@ namespace SilentTools
             MaterialLocation materialLocation,
             MaterialSearch materialSearch,
             MaterialNaming materialNaming,
-            string materialSearchPath)
+            string materialSearchPath,
+            out List<Transform> outNodeTransforms)
         {
+            outNodeTransforms = new List<Transform>();
+
             if (objData == null) return null;
+
+            string nameSource;
+            NinjaNodeNameList resolvedNodeNames = NinjaNodeNameResolver.ResolveNodeNames(objData, null, ctx?.assetPath, ctx, out nameSource);
 
             GameObject rootGO = new GameObject(assetName);
 
-            // 1. Build Node Hierarchy
-            List<Transform> nodeTransforms = new List<Transform>();
             for (int i = 0; i < objData.Nodes.Count; i++)
             {
                 NinjaNode node = objData.Nodes[i];
@@ -40,21 +44,23 @@ namespace SilentTools
                 pos.z *= scale;
 
                 Vector3 rot = node.Rotation;
+                if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
+                if (float.IsNaN(rot.y) || float.IsInfinity(rot.y)) rot.y = 0f;
+                if (float.IsNaN(rot.z) || float.IsInfinity(rot.z)) rot.z = 0f;
                 rot.y *= -1f;
 
                 nodeGO.transform.localPosition = pos;
                 nodeGO.transform.localEulerAngles = rot;
                 nodeGO.transform.localScale = node.Scaling;
 
-                if (node.ParentIndex >= 0 && node.ParentIndex < nodeTransforms.Count)
-                    nodeGO.transform.SetParent(nodeTransforms[node.ParentIndex], false);
+                if (node.ParentIndex >= 0 && node.ParentIndex < outNodeTransforms.Count)
+                    nodeGO.transform.SetParent(outNodeTransforms[node.ParentIndex], false);
                 else
                     nodeGO.transform.SetParent(rootGO.transform, false);
 
-                nodeTransforms.Add(nodeGO.transform);
+                outNodeTransforms.Add(nodeGO.transform);
             }
 
-            // 2. Resolve Materials
             List<Material> materials = new List<Material>();
             if (importMaterials)
             {
@@ -70,7 +76,6 @@ namespace SilentTools
                 );
             }
 
-            // 3. Build SubObjects & Meshes
             int subObjIndex = 0;
             foreach (NinjaSubObject subObj in objData.SubObjects)
             {
@@ -91,8 +96,8 @@ namespace SilentTools
                     ctx.AddObjectToAsset($"Mesh_{subObjIndex}", mesh);
 
                     GameObject meshGO = new GameObject($"SubObj_{subObjIndex}");
-                    Transform parentNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < nodeTransforms.Count)
-                        ? nodeTransforms[meshSet.NodeIndex] : rootGO.transform;
+                    Transform parentNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < outNodeTransforms.Count)
+                        ? outNodeTransforms[meshSet.NodeIndex] : rootGO.transform;
                     meshGO.transform.SetParent(parentNode, false);
 
                     Material mat = (meshSet.MaterialIndex >= 0 && meshSet.MaterialIndex < materials.Count)
@@ -109,10 +114,10 @@ namespace SilentTools
                         for (int b = 0; b < vList.BoneMatrixIndices.Count; b++)
                         {
                             int nodeIdx = vList.BoneMatrixIndices[b];
-                            if (nodeIdx >= 0 && nodeIdx < nodeTransforms.Count)
+                            if (nodeIdx >= 0 && nodeIdx < outNodeTransforms.Count)
                             {
-                                bones[b] = nodeTransforms[nodeIdx];
-                                subBindPoses[b] = nodeTransforms[nodeIdx].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+                                bones[b] = outNodeTransforms[nodeIdx];
+                                subBindPoses[b] = outNodeTransforms[nodeIdx].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
                             }
                         }
                         mesh.bindposes = subBindPoses;
@@ -132,6 +137,22 @@ namespace SilentTools
             }
 
             return rootGO;
+        }
+
+        public static GameObject ResolveObject(
+            NinjaObject objData,
+            NinjaTextureList texList,
+            string assetName,
+            UnityEditor.AssetImporters.AssetImportContext ctx,
+            float scale,
+            bool importMaterials,
+            MaterialLocation materialLocation,
+            MaterialSearch materialSearch,
+            MaterialNaming materialNaming,
+            string materialSearchPath)
+        {
+            List<Transform> dummy;
+            return ResolveObject(objData, texList, assetName, ctx, scale, importMaterials, materialLocation, materialSearch, materialNaming, materialSearchPath, out dummy);
         }
 
         public static Mesh CreateUnityMesh(NinjaVertexList vList, NinjaPrimitiveList pList, float scale, string name)
@@ -259,7 +280,6 @@ namespace SilentTools
                         if (a == b || b == c || a == c)
                             continue;
 
-                        // Winding inverted to match negated X-axis coordinate flip
                         if (i % 2 == 1)
                         {
                             triangles.Add(a);

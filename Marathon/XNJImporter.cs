@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEditor;
+using System.Collections.Generic;
 using System.IO;
 using Marathon.Formats.Mesh.Ninja;
 
@@ -37,6 +38,8 @@ namespace SilentTools
             string assetName = Path.GetFileNameWithoutExtension(ctx.assetPath);
 
             GameObject rootGO = null;
+            List<Transform> nodeTransforms = new List<Transform>();
+
             if (loader.Data.Object != null)
             {
                 rootGO = NinjaObjectResolver.ResolveObject(
@@ -49,7 +52,8 @@ namespace SilentTools
                     m_MaterialLocation,
                     m_MaterialSearch,
                     m_MaterialNaming,
-                    m_MaterialSearchPath
+                    m_MaterialSearchPath,
+                    out nodeTransforms
                 );
             }
             else
@@ -57,17 +61,32 @@ namespace SilentTools
                 rootGO = new GameObject(assetName);
             }
 
-            if (loader.Data.Motion != null && m_ImportAnimation)
+            if (m_ImportAnimation)
             {
-                AnimationClip clip = NinjaMotionResolver.ResolveMotion(
-                    loader.Data.Motion,
-                    $"{assetName}_Animation",
-                    m_Scale,
-                    rootGO
-                );
+                NinjaMotion nodeMotion = loader.Data.Motion;
+                NinjaMotion matMotion = loader.Data.MaterialMotion;
+                string nodeSource, matSource;
 
-                ctx.AddObjectToAsset("AnimationClip", clip);
-                rootGO.AddComponent<Animator>();
+                NinjaMotionResolver.ResolveLinkedMotions(ctx.assetPath, ctx, out NinjaMotion extraNodeMot, out NinjaMotion extraMatMot, out nodeSource, out matSource);
+                if (nodeMotion == null) nodeMotion = extraNodeMot;
+                if (matMotion == null) matMotion = extraMatMot;
+
+                if (nodeMotion != null)
+                {
+                    AnimationClip nodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", m_Scale, rootGO, nodeTransforms);
+                    if (nodeClip != null) ctx.AddObjectToAsset("NodeAnimation", nodeClip);
+                }
+
+                if (matMotion != null)
+                {
+                    AnimationClip matClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", m_Scale, rootGO, nodeTransforms);
+                    if (matClip != null) ctx.AddObjectToAsset("MaterialAnimation", matClip);
+                }
+
+                if (nodeMotion != null || matMotion != null)
+                {
+                    rootGO.AddComponent<Animator>();
+                }
             }
 
             ctx.AddObjectToAsset("main", rootGO);

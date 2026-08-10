@@ -1,24 +1,170 @@
 using UnityEngine;
 using UnityEditor;
+using System.Collections.Generic;
+using System.IO;
 using Marathon.Formats.Mesh.Ninja;
 
 namespace SilentTools
 {
     public static class NinjaMotionResolver
     {
+        private static readonly string[] MotionExtensions = new string[] {
+            ".xnm", ".XNM", ".gnm", ".GNM", ".znm", ".ZNM"
+        };
+
+        private static readonly string[] MaterialMotionExtensions = new string[] {
+            ".xnv", ".XNV", ".gnv", ".GNV", ".znv", ".ZNV"
+        };
+
+        private static readonly string[] ModelExtensions = new string[] {
+            ".xna", ".XNA", ".xnn", ".XNN", ".xnj", ".XNJ", ".xno", ".XNO", ".gna", ".gnn", ".gno"
+        };
+
         public static float BamsToDegrees(int bamAngle) => (float)((double)bamAngle * (180.0 / 32768.0));
         public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
+
+        public static void ResolveLinkedMotions(
+            string assetPath,
+            UnityEditor.AssetImporters.AssetImportContext ctx,
+            out NinjaMotion nodeMotion,
+            out NinjaMotion matMotion,
+            out string nodeMotionSource,
+            out string matMotionSource)
+        {
+            nodeMotion = null;
+            matMotion = null;
+            nodeMotionSource = "Embedded";
+            matMotionSource = "Embedded";
+
+            if (string.IsNullOrEmpty(assetPath)) return;
+
+            string baseDirectory = Path.GetDirectoryName(assetPath);
+            string baseFileName = Path.GetFileNameWithoutExtension(assetPath);
+
+            foreach (string ext in MotionExtensions)
+            {
+                string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
+                if (candidatePath.Equals(assetPath.Replace('\\', '/'), System.StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (File.Exists(candidatePath))
+                {
+                    try
+                    {
+                        NinjaNext loader = new NinjaNext();
+                        loader.Load(candidatePath);
+                        if (loader.Data.Motion != null)
+                        {
+                            nodeMotion = loader.Data.Motion;
+                            nodeMotionSource = $"External: {Path.GetFileName(candidatePath)}";
+                            if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
+                            break;
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Debug.LogWarning($"Could not load linked node motion {candidatePath}:\n{ex}");
+                    }
+                }
+            }
+
+            foreach (string ext in MaterialMotionExtensions)
+            {
+                string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
+                if (candidatePath.Equals(assetPath.Replace('\\', '/'), System.StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (File.Exists(candidatePath))
+                {
+                    try
+                    {
+                        NinjaNext loader = new NinjaNext();
+                        loader.Load(candidatePath);
+                        NinjaMotion foundMot = loader.Data.MaterialMotion ?? loader.Data.Motion;
+                        if (foundMot != null)
+                        {
+                            matMotion = foundMot;
+                            matMotionSource = $"External: {Path.GetFileName(candidatePath)}";
+                            if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
+                            break;
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Debug.LogWarning($"Could not load linked material motion {candidatePath}:\n{ex}");
+                    }
+                }
+            }
+        }
+
+        public static string[] ResolveNodeHierarchyTargets(string assetPath, UnityEditor.AssetImporters.AssetImportContext ctx = null)
+        {
+            if (string.IsNullOrEmpty(assetPath)) return new string[0];
+
+            string baseDirectory = Path.GetDirectoryName(assetPath);
+            string baseFileName = Path.GetFileNameWithoutExtension(assetPath);
+
+            foreach (string ext in ModelExtensions)
+            {
+                string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
+                if (candidatePath.Equals(assetPath.Replace('\\', '/'), System.StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (File.Exists(candidatePath))
+                {
+                    try
+                    {
+                        NinjaNext loader = new NinjaNext();
+                        loader.Load(candidatePath);
+
+                        List<string> nodeNames = null;
+                        if (loader.Data.NodeNameList != null && loader.Data.NodeNameList.NinjaNodeNames != null)
+                        {
+                            nodeNames = loader.Data.NodeNameList.NinjaNodeNames;
+                        }
+                        else if (loader.Data.Object != null && loader.Data.Object.Nodes != null)
+                        {
+                            nodeNames = new List<string>();
+                            for (int i = 0; i < loader.Data.Object.Nodes.Count; i++)
+                            {
+                                string nName = loader.Data.Object.Nodes[i].Name;
+                                nodeNames.Add(!string.IsNullOrEmpty(nName) ? nName : $"Node_{i:0000}");
+                            }
+                        }
+
+                        if (nodeNames != null && nodeNames.Count > 0)
+                        {
+                            if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
+                            return nodeNames.ToArray();
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Debug.LogWarning($"Could not resolve target nodes from {candidatePath}:\n{ex}");
+                    }
+                }
+            }
+
+            return new string[0];
+        }
 
         public static AnimationClip ResolveMotion(
             NinjaMotion motionData,
             string clipName,
             float scale,
-            GameObject rootGO)
+            GameObject rootGO,
+            List<Transform> nodeTransforms = null)
         {
             if (motionData == null) return null;
 
             string[] nodeHierarchyPaths = null;
-            if (rootGO != null)
+            if (nodeTransforms != null && nodeTransforms.Count > 0 && rootGO != null)
+            {
+                nodeHierarchyPaths = new string[nodeTransforms.Count];
+                for (int i = 0; i < nodeTransforms.Count; i++)
+                {
+                    if (nodeTransforms[i] != null)
+                        nodeHierarchyPaths[i] = GetTransformPath(nodeTransforms[i], rootGO.transform);
+                }
+            }
+            else if (rootGO != null)
             {
                 Transform[] transforms = rootGO.GetComponentsInChildren<Transform>(true);
                 nodeHierarchyPaths = new string[transforms.Length];
