@@ -231,6 +231,8 @@ namespace SilentTools
 
         private static void ApplyCurveSettings(AnimationCurve curve, SubMotionInterpolationType interp)
         {
+            if (curve == null || curve.keys == null || curve.keys.Length == 0) return;
+
             WrapMode mode = WrapMode.Default;
             if (interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_NOREPEAT)) mode = WrapMode.ClampForever;
             if (interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT) || interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT)) mode = WrapMode.Loop;
@@ -239,14 +241,39 @@ namespace SilentTools
             curve.preWrapMode = mode;
             curve.postWrapMode = mode;
 
-            AnimationUtility.TangentMode tMode = AnimationUtility.TangentMode.ClampedAuto;
-            if (interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_LINEAR)) tMode = AnimationUtility.TangentMode.Linear;
-            if (interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT)) tMode = AnimationUtility.TangentMode.Constant;
-
-            for (int i = 0; i < curve.keys.Length; i++)
+            Keyframe[] keys = curve.keys;
+            if (keys.Length >= 2)
             {
-                AnimationUtility.SetKeyLeftTangentMode(curve, i, tMode);
-                AnimationUtility.SetKeyRightTangentMode(curve, i, tMode);
+                if (interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT))
+                {
+                    for (int i = 0; i < keys.Length; i++)
+                    {
+                        keys[i].inTangent = float.PositiveInfinity;
+                        keys[i].outTangent = float.PositiveInfinity;
+                    }
+                    curve.keys = keys;
+                }
+                else if (interp.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_LINEAR))
+                {
+                    for (int i = 0; i < keys.Length - 1; i++)
+                    {
+                        float dt = keys[i + 1].time - keys[i].time;
+                        if (dt > 0.00001f)
+                        {
+                            float slope = (keys[i + 1].value - keys[i].value) / dt;
+                            keys[i].outTangent = slope;
+                            keys[i + 1].inTangent = slope;
+                        }
+                    }
+                    curve.keys = keys;
+                }
+                else
+                {
+                    for (int i = 0; i < keys.Length; i++)
+                    {
+                        curve.SmoothTangents(i, 0f);
+                    }
+                }
             }
         }
     }
