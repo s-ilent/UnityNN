@@ -427,25 +427,27 @@ namespace Marathon.IO
         public Matrix4x4 ReadMatrix()
         {
             Matrix4x4 matrix = new Matrix4x4();
-            
-                matrix[1, 1] = ReadSingle();
-                matrix[1, 2] = ReadSingle();
-                matrix[1, 3] = ReadSingle();
-                matrix[1, 4] = ReadSingle();
-                matrix[2, 1] = ReadSingle();
-                matrix[2, 2] = ReadSingle();
-                matrix[2, 3] = ReadSingle();
-                matrix[2, 4] = ReadSingle();
-                matrix[3, 1] = ReadSingle();
-                matrix[3, 2] = ReadSingle();
-                matrix[3, 3] = ReadSingle();
-                matrix[3, 4] = ReadSingle();
-                matrix[4, 1] = ReadSingle();
-                matrix[4, 2] = ReadSingle();
-                matrix[4, 3] = ReadSingle();
-                matrix[4, 4] = ReadSingle();
-            
-
+        
+            matrix.m00 = ReadSingle();
+            matrix.m01 = ReadSingle();
+            matrix.m02 = ReadSingle();
+            matrix.m03 = ReadSingle();
+        
+            matrix.m10 = ReadSingle();
+            matrix.m11 = ReadSingle();
+            matrix.m12 = ReadSingle();
+            matrix.m13 = ReadSingle();
+        
+            matrix.m20 = ReadSingle();
+            matrix.m21 = ReadSingle();
+            matrix.m22 = ReadSingle();
+            matrix.m23 = ReadSingle();
+        
+            matrix.m30 = ReadSingle();
+            matrix.m31 = ReadSingle();
+            matrix.m32 = ReadSingle();
+            matrix.m33 = ReadSingle();
+        
             return matrix;
         }
 
@@ -1186,25 +1188,25 @@ namespace Marathon.IO
         /// </summary>
         public virtual unsafe void Write(Matrix4x4 matrix)
         {
-            Write(*(uint*)&matrix.M11);
-            Write(*(uint*)&matrix.M12);
-            Write(*(uint*)&matrix.M13);
-            Write(*(uint*)&matrix.M14);
-
-            Write(*(uint*)&matrix.M21);
-            Write(*(uint*)&matrix.M22);
-            Write(*(uint*)&matrix.M23);
-            Write(*(uint*)&matrix.M24);
-
-            Write(*(uint*)&matrix.M31);
-            Write(*(uint*)&matrix.M32);
-            Write(*(uint*)&matrix.M33);
-            Write(*(uint*)&matrix.M34);
-
-            Write(*(uint*)&matrix.M41);
-            Write(*(uint*)&matrix.M42);
-            Write(*(uint*)&matrix.M43);
-            Write(*(uint*)&matrix.M44);
+            Write(matrix.m00);
+            Write(matrix.m01);
+            Write(matrix.m02);
+            Write(matrix.m03);
+    
+            Write(matrix.m10);
+            Write(matrix.m11);
+            Write(matrix.m12);
+            Write(matrix.m13);
+    
+            Write(matrix.m20);
+            Write(matrix.m21);
+            Write(matrix.m22);
+            Write(matrix.m23);
+    
+            Write(matrix.m30);
+            Write(matrix.m31);
+            Write(matrix.m32);
+            Write(matrix.m33);
         }
 */
     }
