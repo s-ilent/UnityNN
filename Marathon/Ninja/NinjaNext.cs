@@ -13,9 +13,6 @@ namespace Marathon.Formats.Mesh.Ninja
         public NinjaNext(string file, bool serialise = false)
         {
             Load(file);
-
-            //if (serialise)
-            //    JsonSerialise(Data);
         }
 
         public override string Signature { get; } = "NXIF";
@@ -23,17 +20,11 @@ namespace Marathon.Formats.Mesh.Ninja
         public class FormatData
         {
             public NinjaTextureList TextureList { get; set; }
-
             public NinjaEffectList EffectList { get; set; }
-
             public NinjaNodeNameList NodeNameList { get; set; }
-
             public NinjaObject Object { get; set; }
-
             public NinjaLight Light { get; set; }
-
             public NinjaCamera Camera { get; set; }
-
             public NinjaMotion Motion { get; set; }
         }
 
@@ -43,8 +34,28 @@ namespace Marathon.Formats.Mesh.Ninja
         {
             BinaryReaderEx reader = new BinaryReaderEx(stream);
 
-            // Read NXIF chunk.
-            reader.ReadSignature(4, Signature);
+            long headerStartPos = 0;
+            string headerSig = new string(reader.ReadChars(4));
+
+            // Check if file starts with 0x40-byte outer wrapper header (XNJ, XNM, XNA, XNO, XNC, etc.)
+            if (headerSig != "NXIF" && !headerSig.EndsWith("IF"))
+            {
+                if (stream.Length >= 0x60)
+                {
+                    reader.JumpTo(0x40);
+                    headerStartPos = 0x40;
+                    string innerSig = new string(reader.ReadChars(4));
+
+                    if (innerSig != "NXIF" && !innerSig.EndsWith("IF"))
+                    {
+                        // Fallback reset to offset 0 if 0x40 is not a valid N*IF container header
+                        reader.JumpTo(0);
+                        headerStartPos = 0;
+                        reader.ReadChars(4);
+                    }
+                }
+            }
+
             uint chunkSize = reader.ReadUInt32();
             uint dataChunkCount = reader.ReadUInt32();
             uint dataOffset = reader.ReadUInt32();
@@ -53,10 +64,10 @@ namespace Marathon.Formats.Mesh.Ninja
             uint NOF0Size = reader.ReadUInt32();
             uint version = reader.ReadUInt32();
 
-            // Set the reader's offset to the value set in the NXIF.
-            reader.Offset = dataOffset;
+            // Set reader offset relative to inner container header start position
+            reader.Offset = (uint)(headerStartPos + dataOffset);
 
-            // Read data chunks.
+            // Read data chunks
             for (int i = 0; i < dataChunkCount; i++)
             {
                 // Read the chunk's ID and size.
@@ -66,52 +77,66 @@ namespace Marathon.Formats.Mesh.Ninja
                 // Calculate where the next chunk begins so we can jump to it.
                 long targetPosition = reader.BaseStream.Position + chunkSize;
 
-                /* Run the approriate read function for the chunk.
-                   If this chunk isn't currently handled, throw an exception. */
                 switch (chunkID)
                 {
-                    case "NXTL":
+                    // Texture Lists
+                    case "NXTL": case "NGTL": case "NZTL": case "NCTL": case "NETL": case "NITL": case "NLTL": case "NSTL": case "NUTL":
                         Data.TextureList = new NinjaTextureList();
                         Data.TextureList.Read(reader);
                         break;
-                    case "NXEF":
+
+                    // Effect Lists
+                    case "NXEF": case "NGEF": case "NZEF": case "NCEF": case "NEEF": case "NIEF": case "NLEF": case "NSEF": case "NUEF":
                         Data.EffectList = new NinjaEffectList();
                         Data.EffectList.Read(reader);
                         break;
-                    case "NXNN":
+
+                    // Node Name Lists
+                    case "NXNN": case "NGNN": case "NZNN": case "NCNN": case "NENN": case "NINN": case "NLNN": case "NSNN": case "NUNN":
                         Data.NodeNameList = new NinjaNodeNameList();
                         Data.NodeNameList.Read(reader);
                         break;
-                    case "NXOB":
+
+                    // Objects / Meshes
+                    case "NXOB": case "NGOB": case "NZOB": case "NCOB": case "NEOB": case "NIOB": case "NLOB": case "NSOB": case "NUOB":
                         Data.Object = new NinjaObject();
                         Data.Object.Read(reader);
                         break;
-                    case "NXLI":
+
+                    // Lights
+                    case "NXLI": case "NGLI": case "NZLI": case "NCLI": case "NELI":
                         Data.Light = new NinjaLight();
                         Data.Light.Read(reader);
                         break;
-                    case "NXCA":
+
+                    // Cameras
+                    case "NXCA": case "NGCA": case "NZCA": case "NCCA": case "NECA":
                         Data.Camera = new NinjaCamera();
                         Data.Camera.Read(reader);
                         break;
-                    case "NXMA":
-                    case "NXMC":
-                    case "NXML":
-                    case "NXMM":
-                    case "NXMO":
+
+                    // Motions / Animations
+                    case "NXMA": case "NXMC": case "NXML": case "NXMM": case "NXMO":
+                    case "NGMA": case "NGMC": case "NGML": case "NGMM": case "NGMO":
+                    case "NZMA": case "NZMC": case "NZML": case "NZMM": case "NZMO":
                         Data.Motion = new NinjaMotion();
                         Data.Motion.ChunkID = chunkID;
                         Data.Motion.Read(reader);
                         break;
+
+                    // Metadata & Unknown Chunks
+                    case "NOF0":
+                    case "NFN0":
+                    case "NEND":
                     default:
-                        throw new NotImplementedException();
+                        break;
                 }
 
                 // Jump to the position of the next chunk to make sure the reader's in the right place.
                 reader.JumpTo(targetPosition);
             }
 
-            // If this SegaNN file has both an Object Chunk and a Node Name List then fill in the Nodes with their names.
+            // Assign node/bone names if both Object and NodeNameList exist
             if (Data.Object != null && Data.NodeNameList != null)
             {
                 if (Data.Object.Nodes.Count == Data.NodeNameList.NinjaNodeNames.Count)
@@ -121,115 +146,5 @@ namespace Marathon.Formats.Mesh.Ninja
                 }
             }
         }
-/*
-        public override void Save(Stream stream)
-        {
-            BinaryWriterEx writer = new BinaryWriterEx(stream);
-            writer.Offset = 0x20;
-
-            // Get amount of data chunks.
-            uint dataChunkCount = 0;
-            {
-                if (Data.TextureList != null)
-                    dataChunkCount++;
-
-                if (Data.EffectList != null)
-                    dataChunkCount++;
-
-                if (Data.NodeNameList != null)
-                    dataChunkCount++;
-
-                if (Data.Object != null)
-                    dataChunkCount++;
-
-                if (Data.Light != null)
-                    dataChunkCount++;
-
-                if (Data.Camera != null)
-                    dataChunkCount++;
-
-                if (Data.Motion != null)
-                    dataChunkCount++;
-            }
-
-            // Write NXIF chunk.
-            writer.Write(Signature);
-            writer.Write(0x18);
-            writer.Write(dataChunkCount);
-            writer.Write(0x20);
-            long DataSizePosition = writer.BaseStream.Position;
-            writer.Write("SIZE"); // Temporary value, filled in once we know how long the data is.
-            writer.Write("NOF0"); // Temporary value, filled in once we know where the NOF0 chunk is.
-            writer.Write("SIZE"); // Temporary value, filled in once we know how long the NOF0 chunk is.
-            writer.Write(1);
-
-            // Write the chunks we have loaded.
-            Data.TextureList?.Write(writer);
-            Data.EffectList?.Write(writer);
-            Data.NodeNameList?.Write(writer);
-            Data.Object?.Write(writer);
-            Data.Light?.Write(writer);
-            Data.Camera?.Write(writer);
-            Data.Motion?.Write(writer);
-
-            // Calculate and write the position of the NOF0 chunk.
-            uint NOF0Offset = (uint)writer.BaseStream.Position;
-            writer.BaseStream.Position = DataSizePosition;
-            writer.Write(NOF0Offset - 0x20);
-            writer.Write(NOF0Offset);
-            writer.BaseStream.Position = NOF0Offset;
-
-            // Write NOF0 chunk.
-            writer.Write("NOF0");
-            writer.Write("SIZE"); // Temporary value, filled in once we know how long the data is.
-            long N0F0SizePosition = writer.BaseStream.Position;
-
-            // Get the stored offsets from the Writer and sort them in order.
-            List<uint> Offsets = writer.GetOffsets();
-            Offsets.Sort();
-
-            // Write the count of Offsets and finish the header.
-            writer.Write(Offsets.Count);
-            writer.FixPadding(0x10);
-
-            // Write each offset, taking the writer's offset into account.
-            for (int i = 0; i < Offsets.Count; i++)
-                writer.Write(Offsets[i] - 0x20);
-
-            // Alignment.
-            writer.FixPadding(0x10);
-
-            // Calculate and write the size of the NOF0 chunk.
-            long NOF0EndPosition = writer.BaseStream.Position;
-            uint NOF0Size = (uint)(NOF0EndPosition - N0F0SizePosition);
-            writer.BaseStream.Position = N0F0SizePosition - 4;
-            writer.Write(NOF0Size);
-            writer.BaseStream.Position = DataSizePosition + 8;
-            writer.Write(NOF0Size + 8);
-            writer.BaseStream.Position = NOF0EndPosition;
-
-            // Write NFN0 chunk.
-            writer.Write("NFN0");
-            writer.Write("SIZE"); // Temporary value, filled in once we know how long the data is.
-            long NFN0SizePosition = writer.BaseStream.Position;
-            writer.FixPadding(0x10);
-
-            // Get the current file name and write it, aligned to 0x10 bytes.
-            writer.WriteNullTerminatedString(Path.GetFileName((stream as FileStream).Name));
-            writer.FixPadding(0x10);
-
-            // Calculate and write the size of the NFN0 chunk.
-            long NFN0EndPosition = writer.BaseStream.Position;
-            uint NFN0Size = (uint)(NFN0EndPosition - NFN0SizePosition);
-            writer.BaseStream.Position = NFN0SizePosition - 4;
-            writer.Write(NFN0Size);
-            writer.BaseStream.Position = NFN0EndPosition;
-
-            // Write NEND chunk.
-            writer.Write("NEND");
-            writer.Write(8);
-            writer.FixPadding(0x10);
-        }
-*/ 
     }
 }
