@@ -10,11 +10,11 @@ namespace SilentTools
 {
     [ScriptedImporter(1, new[] {
         // Xbox / PC formats
-        "xno", "xna", "xnj", "xnm", "xnv", "xnt", "xnn", "xnc", "xnl", "xnd", "xng", "xne", "xni", "xnf", "xnr",
+        "xno", "xna", "xnj", "xnm", "xnv", "xnt", "xnn", "xnc", "xnl", "xnd", "xng", "xne", "xni", "xnf", "xnr", "rel",
         // GameCube / Wii formats
-        "gno", "gna", "gnj", "gnm", "gnv", "gnt", "gnn", "gnc", "gnl",
+        "gno", "gna", "gnj", "gnm", "gnv", "gnt", "gnn", "gnc", "gnl", "gnr",
         // PS2 / PSP formats
-        "zno", "znm", "znt", "znn"
+        "zno", "znm", "znt", "znn", "znr"
     })]
     public class NinjaNextImporter : ScriptedImporter
     {
@@ -36,7 +36,39 @@ namespace SilentTools
         {
             string ext = Path.GetExtension(ctx.assetPath).ToLowerInvariant();
             string assetName = Path.GetFileNameWithoutExtension(ctx.assetPath);
+            Texture2D icon = NinjaIconResolver.GetIconForExtension(ext);
 
+            // -----------------------------------------------------------------
+            // 1. REL / XNR Stage Layout & Environment Files (.rel, .xnr, .gnr, .znr)
+            // -----------------------------------------------------------------
+            if (ext == ".rel" || ext == ".xnr" || ext == ".gnr" || ext == ".znr")
+            {
+                byte[] rawData;
+                try
+                {
+                    rawData = File.ReadAllBytes(ctx.assetPath);
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogError($"Failed to read REL/XNR file {ctx.assetPath}:\n{ex}");
+                    return;
+                }
+
+                RelFileType relType;
+                object parsedRel = RelResolver.ParseRelBytes(rawData, Path.GetFileName(ctx.assetPath), out relType);
+
+                if (parsedRel != null)
+                {
+                    GameObject relRoot = RelResolver.ResolveRelAsset(parsedRel, relType, assetName, m_Scale);
+                    ctx.AddObjectToAsset("main", relRoot, icon);
+                    ctx.SetMainObject(relRoot);
+                    return;
+                }
+            }
+
+            // -----------------------------------------------------------------
+            // 2. Core Binary Loader (.xno, .xna, .xnj, .xnm, .xnt, etc.)
+            // -----------------------------------------------------------------
             NinjaNext loader = new NinjaNext();
             try
             {
@@ -48,10 +80,8 @@ namespace SilentTools
                 return;
             }
 
-            Texture2D icon = NinjaIconResolver.GetIconForExtension(ext);
-
             // -----------------------------------------------------------------
-            // 1. Standalone Motion / Animation Assets (.xnm, .xnv, .gnm, .znm)
+            // 3. Standalone Motion / Animation Assets (.xnm, .xnv, .gnm, .znm)
             // -----------------------------------------------------------------
             bool isStandaloneMotion = (ext == ".xnm" || ext == ".xnv" || ext == ".gnm" || ext == ".gnv" || ext == ".znm") 
                                       && loader.Data.Object == null;
@@ -76,7 +106,7 @@ namespace SilentTools
             }
 
             // -----------------------------------------------------------------
-            // 2. Model & Hierarchy Assets (.xno, .xna, .xnj, etc.)
+            // 4. Model & Hierarchy Assets (.xno, .xna, .xnj, etc.)
             // -----------------------------------------------------------------
             GameObject rootGO = null;
             List<Transform> nodeTransforms = new List<Transform>();
@@ -99,7 +129,7 @@ namespace SilentTools
             }
 
             // -----------------------------------------------------------------
-            // 3. Camera / Light Objects (.xnc, .xnl, etc.)
+            // 5. Camera / Light Objects (.xnc, .xnl, etc.)
             // -----------------------------------------------------------------
             if (rootGO == null && loader.Data.Camera != null)
             {
@@ -114,7 +144,7 @@ namespace SilentTools
             }
 
             // -----------------------------------------------------------------
-            // 4. Embedded / Linked Animation Resolution for Model Packages
+            // 6. Embedded / Linked Animation Resolution for Model Packages
             // -----------------------------------------------------------------
             if (rootGO != null)
             {
@@ -151,7 +181,7 @@ namespace SilentTools
             }
 
             // -----------------------------------------------------------------
-            // 5. Non-instantiable Support / Metadata Assets (.xnt, .xnn, etc.)
+            // 7. Non-instantiable Support / Metadata Assets (.xnt, .xnn, etc.)
             // -----------------------------------------------------------------
             TextAsset textAsset = CreateSummaryTextAsset(loader.Data, assetName, ext);
             ctx.AddObjectToAsset("main", textAsset, icon);
