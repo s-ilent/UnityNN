@@ -4,7 +4,7 @@ using System.IO;
 
 namespace SilentTools
 {
-    [UnityEditor.AssetImporters.ScriptedImporter(1, "rel")]
+    [UnityEditor.AssetImporters.ScriptedImporter(1, new[] { "rel" })]
     public class RELImporter : UnityEditor.AssetImporters.ScriptedImporter
     {
         [Header("Import Settings")]
