@@ -25,6 +25,7 @@ namespace Marathon.Formats.Mesh.Ninja
             public NinjaLight Light { get; set; }
             public NinjaCamera Camera { get; set; }
             public NinjaMotion Motion { get; set; }
+            public NinjaMotion MaterialMotion { get; set; }
         }
 
         public FormatData Data { get; set; } = new FormatData();
@@ -128,9 +129,18 @@ namespace Marathon.Formats.Mesh.Ninja
                     case "NXMA": case "NXMC": case "NXML": case "NXMM": case "NXMO":
                     case "NGMA": case "NGMC": case "NGML": case "NGMM": case "NGMO":
                     case "NZMA": case "NZMC": case "NZML": case "NZMM": case "NZMO":
-                        Data.Motion = new NinjaMotion();
-                        Data.Motion.ChunkID = chunkID;
-                        Data.Motion.Read(reader);
+                    case "NXNV": case "NXMV": case "NGNV": case "NZNV":
+                        NinjaMotion motion = new NinjaMotion();
+                        motion.ChunkID = chunkID;
+                        motion.Read(reader);
+                        if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) || chunkID.EndsWith("NV") || chunkID.EndsWith("MV"))
+                        {
+                            Data.MaterialMotion = motion;
+                        }
+                        else
+                        {
+                            Data.Motion = motion;
+                        }
                         break;
 
                     // Metadata & Unknown Chunks
