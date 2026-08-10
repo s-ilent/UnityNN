@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+﻿// File: Marathon/Ninja/NinjaMotion.cs
 using System.Collections.Generic;
 using Marathon.IO;
 using System;
@@ -54,11 +54,11 @@ namespace Marathon.Formats.Mesh.Ninja
             // Jump to the offset for this motion data's sub motions.
             reader.JumpTo(SubMotionsOffset, true);
 
-            // Loop through and read all the sub motions.
+            // Loop through and read all sub motions with parent motion type context.
             for (int i = 0; i < SubMotionCount; i++)
             {
                 NinjaSubMotion subMotion = new NinjaSubMotion();
-                subMotion.Read(reader);
+                subMotion.Read(reader, Type);
                 SubMotions.Add(subMotion);
             }
         }
@@ -75,45 +75,45 @@ namespace Marathon.Formats.Mesh.Ninja
             // Write chunk header.
             writer.Write(ChunkID);
             writer.Write("SIZE"); // Temporary entry, is filled in later once we know this chunk's size.
+            writer.Write("SIZE");
             long HeaderSizePosition = writer.BaseStream.Position;
             writer.AddOffset("dataOffset");
             writer.FixPadding(0x10);
 
+            bool isNodeMotion = (Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_NODE || (Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
+            bool isMaterialMotion = (Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
+
             // Keyframes.
             for (int i = 0; i < SubMotions.Count; i++)
             {
-                // Add an offset to our list so we know where this sub motion's keyframes are.
                 MotionOffsets.Add($"SubMotion{i}KeyframesOffset", (uint)writer.BaseStream.Position);
 
-                // Loop through this sub motions keyframes and write different data depending on the Type flag.
+                var smType = SubMotions[i].Type;
                 for (int k = 0; k < SubMotions[i].Keyframes.Count; k++)
                 {
                     if
                     (
-                        SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) ||
-                        SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_SCALING_MASK)     ||
-                        SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_AMBIENT_MASK)     ||
-                        SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_DIFFUSE_MASK)     ||
-                        SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_SPECULAR_MASK)    ||
-                        SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_LIGHT_COLOR_MASK)
+                        (isNodeMotion && ((smType & SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_SCALING_MASK) != 0)) ||
+                        (isMaterialMotion && ((smType & SubMotionType.NND_SMOTTYPE_DIFFUSE_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_SPECULAR_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_AMBIENT_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_OFFSET_MASK) != 0)) ||
+                        (smType & SubMotionType.NND_SMOTTYPE_LIGHT_COLOR_MASK) != 0
                     )
                     {
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_VECTOR).Frame);
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_VECTOR).Value);
                     }
-                    else if (SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_XYZ))
+                    else if (isNodeMotion && (smType & SubMotionType.NND_SMOTTYPE_ROTATION_XYZ) != 0)
                     {
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16).Frame);
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16).Value1);
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16).Value2);
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16).Value3);
                     }
-                    else if (SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_FLOAT))
+                    else if ((smType & SubMotionType.NND_SMOTTYPE_FRAME_FLOAT) != 0)
                     {
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_FLOAT).Frame);
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_FLOAT).Value);
                     }
-                    else if (SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_SINT16))
+                    else if ((smType & SubMotionType.NND_SMOTTYPE_FRAME_SINT16) != 0)
                     {
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_SINT16).Frame);
                         writer.Write((SubMotions[i].Keyframes[k] as NinjaKeyframe.NNS_MOTION_KEY_SINT16).Value);
@@ -126,13 +126,12 @@ namespace Marathon.Formats.Mesh.Ninja
                 }
             }
 
-            /* Write sub motions.
-               Add an offset to our list so we know where the sub motions are. */
+            /* Write sub motions. */
             MotionOffsets.Add($"SubMotionTable", (uint)writer.BaseStream.Position);
             for (int i = 0; i < SubMotions.Count; i++)
             {
-                // Write most of the data for this sub motion.
-                writer.Write((uint)SubMotions[i].Type);
+                var smType = SubMotions[i].Type;
+                writer.Write((uint)smType);
                 writer.Write((uint)SubMotions[i].InterpolationType);
                 writer.Write(SubMotions[i].NodeIndex);
                 writer.Write(SubMotions[i].StartFrame);
@@ -141,29 +140,24 @@ namespace Marathon.Formats.Mesh.Ninja
                 writer.Write(SubMotions[i].EndKeyframe);
                 writer.Write(SubMotions[i].Keyframes.Count);
 
-                /* Figure out the size value to write based on the flags.
-                   Error out if none of them are found. */
                 if
                 (
-                    SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) ||
-                    SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_SCALING_MASK)     ||
-                    SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_AMBIENT_MASK)     ||
-                    SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_DIFFUSE_MASK)     ||
-                    SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_SPECULAR_MASK)    ||
-                    SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_LIGHT_COLOR_MASK)
+                    (isNodeMotion && ((smType & SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_SCALING_MASK) != 0)) ||
+                    (isMaterialMotion && ((smType & SubMotionType.NND_SMOTTYPE_DIFFUSE_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_SPECULAR_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_AMBIENT_MASK) != 0 || (smType & SubMotionType.NND_SMOTTYPE_OFFSET_MASK) != 0)) ||
+                    (smType & SubMotionType.NND_SMOTTYPE_LIGHT_COLOR_MASK) != 0
                 )
                 {
                     writer.Write(16);
                 }
-                else if (SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_XYZ))
+                else if (isNodeMotion && (smType & SubMotionType.NND_SMOTTYPE_ROTATION_XYZ) != 0)
                 {
                     writer.Write(8);
                 }
-                else if (SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_FLOAT))
+                else if ((smType & SubMotionType.NND_SMOTTYPE_FRAME_FLOAT) != 0)
                 {
                     writer.Write(8);
                 }
-                else if (SubMotions[i].Type.HasFlag(SubMotionType.NND_SMOTTYPE_FRAME_SINT16))
+                else if ((smType & SubMotionType.NND_SMOTTYPE_FRAME_SINT16) != 0)
                 {
                     writer.Write(4);
                 }
@@ -172,10 +166,7 @@ namespace Marathon.Formats.Mesh.Ninja
                     throw new NotImplementedException();
                 }
 
-                // Add an offset to fill in later with the NOF0 chunk.
                 writer.AddOffset($"SubMotion{i}KeyframesOffset", 0);
-
-                // Write the previously saved position for this sub motion's keyframes.
                 writer.Write(MotionOffsets[$"SubMotion{i}KeyframesOffset"] - writer.Offset);
             }
 

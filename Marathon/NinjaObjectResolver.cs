@@ -1,3 +1,4 @@
+// File: Marathon/NinjaObjectResolver.cs
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -47,10 +48,9 @@ namespace SilentTools
                 if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
                 if (float.IsNaN(rot.y) || float.IsInfinity(rot.y)) rot.y = 0f;
                 if (float.IsNaN(rot.z) || float.IsInfinity(rot.z)) rot.z = 0f;
-                rot.y *= -1f;
 
                 nodeGO.transform.localPosition = pos;
-                nodeGO.transform.localEulerAngles = rot;
+                nodeGO.transform.localEulerAngles = new Vector3(rot.x, -rot.y, -rot.z);
                 nodeGO.transform.localScale = node.Scaling;
 
                 if (node.ParentIndex >= 0 && node.ParentIndex < outNodeTransforms.Count)
@@ -90,20 +90,29 @@ namespace SilentTools
                     NinjaVertexList vList = objData.VertexLists[meshSet.VertexListIndex];
                     NinjaPrimitiveList pList = objData.PrimitiveLists[meshSet.PrimitiveListIndex];
 
-                    Mesh mesh = CreateUnityMesh(vList, pList, scale, $"{assetName}_Mesh_{subObjIndex}");
+                    Transform parentNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < outNodeTransforms.Count)
+                        ? outNodeTransforms[meshSet.NodeIndex] : rootGO.transform;
+
+                    bool isSkinned = vList.BoneMatrixIndices.Count > 0;
+
+                    Matrix4x4? nodeLocalXform = null;
+                    if (!isSkinned && parentNode != rootGO.transform)
+                    {
+                        nodeLocalXform = parentNode.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+                    }
+
+                    Mesh mesh = CreateUnityMesh(vList, pList, scale, $"{assetName}_Mesh_{subObjIndex}", nodeLocalXform);
                     if (mesh == null) continue;
 
                     ctx.AddObjectToAsset($"Mesh_{subObjIndex}", mesh);
 
                     GameObject meshGO = new GameObject($"SubObj_{subObjIndex}");
-                    Transform parentNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < outNodeTransforms.Count)
-                        ? outNodeTransforms[meshSet.NodeIndex] : rootGO.transform;
                     meshGO.transform.SetParent(parentNode, false);
 
                     Material mat = (meshSet.MaterialIndex >= 0 && meshSet.MaterialIndex < materials.Count)
                         ? materials[meshSet.MaterialIndex] : new Material(Shader.Find("Standard"));
 
-                    if (vList.BoneMatrixIndices.Count > 0)
+                    if (isSkinned)
                     {
                         SkinnedMeshRenderer smr = meshGO.AddComponent<SkinnedMeshRenderer>();
                         smr.sharedMesh = mesh;
@@ -155,7 +164,12 @@ namespace SilentTools
             return ResolveObject(objData, texList, assetName, ctx, scale, importMaterials, materialLocation, materialSearch, materialNaming, materialSearchPath, out dummy);
         }
 
-        public static Mesh CreateUnityMesh(NinjaVertexList vList, NinjaPrimitiveList pList, float scale, string name)
+        public static Mesh CreateUnityMesh(
+            NinjaVertexList vList,
+            NinjaPrimitiveList pList,
+            float scale,
+            string name,
+            Matrix4x4? transformMatrix = null)
         {
             if (vList == null || vList.Vertices == null || vList.Vertices.Count == 0) return null;
 
@@ -170,6 +184,9 @@ namespace SilentTools
 
             bool hasNormals = false, hasTangents = false, hasColors = false, hasUV = false, hasWeights = false;
 
+            Matrix4x4 xform = transformMatrix.HasValue ? transformMatrix.Value : Matrix4x4.identity;
+            bool applyXform = transformMatrix.HasValue && transformMatrix.Value != Matrix4x4.identity;
+
             for (int i = 0; i < vList.Vertices.Count; i++)
             {
                 NinjaVertex v = vList.Vertices[i];
@@ -181,6 +198,12 @@ namespace SilentTools
                     pos.x *= -1f * scale;
                     pos.y *= scale;
                     pos.z *= scale;
+
+                    if (applyXform)
+                    {
+                        pos = xform.MultiplyPoint3x4(pos);
+                    }
+
                     positions[i] = pos;
                 }
 
@@ -189,6 +212,12 @@ namespace SilentTools
                     hasNormals = true;
                     Vector3 n = v.Normals.Value;
                     n.x *= -1f;
+
+                    if (applyXform)
+                    {
+                        n = xform.MultiplyVector(n).normalized;
+                    }
+
                     normals[i] = n;
                 }
 
@@ -196,7 +225,14 @@ namespace SilentTools
                 {
                     hasTangents = true;
                     Vector3 t = v.Tangent.Value;
-                    tangents[i] = new Vector4(-t.x, t.y, t.z, 1.0f);
+                    Vector3 tScaled = new Vector3(-t.x, t.y, t.z);
+
+                    if (applyXform)
+                    {
+                        tScaled = xform.MultiplyVector(tScaled).normalized;
+                    }
+
+                    tangents[i] = new Vector4(tScaled.x, tScaled.y, tScaled.z, 1.0f);
                 }
 
                 if (v.VertexColours != null && v.VertexColours.Length >= 4)

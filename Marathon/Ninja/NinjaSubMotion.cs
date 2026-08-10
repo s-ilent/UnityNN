@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+﻿// File: Marathon/Ninja/NinjaSubMotion.cs
 using System.Collections.Generic;
 using Marathon.IO;
 using System;
@@ -30,7 +30,8 @@ namespace Marathon.Formats.Mesh.Ninja
         /// Reads a Ninja Sub Motion entry from a file.
         /// </summary>
         /// <param name="reader">The binary reader for this SegaNN file.</param>
-        public void Read(BinaryReaderEx reader)
+        /// <param name="parentMotionType">The motion category of the parent motion chunk.</param>
+        public void Read(BinaryReaderEx reader, MotionType parentMotionType = MotionType.NND_MOTIONTYPE_NODE)
         {
             // Read the main data for this Sub Motion.
             Type = (SubMotionType)reader.ReadUInt32();
@@ -50,9 +51,13 @@ namespace Marathon.Formats.Mesh.Ninja
             // Jump to the list of Keyframes for this sub motion.
             reader.JumpTo(KeyFrameOffset, true);
 
-            // Loop through and read the keyframes based on the Type flag.
+            bool is3AxisRotation = (Type & SubMotionType.NND_SMOTTYPE_ROTATION_XYZ) == SubMotionType.NND_SMOTTYPE_ROTATION_XYZ;
+
+            // Loop through and read keyframes according to KeyFrameSize and submotion type.
             for (int i = 0; i < KeyFrameCount; i++)
             {
+                long kfStart = reader.BaseStream.Position;
+
                 if (KeyFrameSize == 16)
                 {
                     NinjaKeyframe.NNS_MOTION_KEY_VECTOR Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_VECTOR();
@@ -61,13 +66,13 @@ namespace Marathon.Formats.Mesh.Ninja
                 }
                 else if (KeyFrameSize == 8)
                 {
-                    if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_XYZ))
+                    if (is3AxisRotation)
                     {
                         NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16();
                         Keyframe.Read(reader);
                         Keyframes.Add(Keyframe);
                     }
-                    else if (Type.HasFlag(SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32))
+                    else if ((Type & SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32) != 0)
                     {
                         NinjaKeyframe.NNS_MOTION_KEY_SINT32 Keyframe = new NinjaKeyframe.NNS_MOTION_KEY_SINT32();
                         Keyframe.Read(reader);
@@ -88,15 +93,12 @@ namespace Marathon.Formats.Mesh.Ninja
                 }
                 else if (KeyFrameSize > 0)
                 {
-                    Debug.Log(Type);
                     reader.JumpAhead(KeyFrameSize);
                 }
-                else
-                {
-                    // All else has failed, give up.
-                    Debug.Log(Type);
-                    throw new NotImplementedException();
-                }
+
+                // Stride safeguard per keyframe
+                if (KeyFrameSize > 0)
+                    reader.JumpTo(kfStart + KeyFrameSize);
             }
 
             // Jump back to where we were.

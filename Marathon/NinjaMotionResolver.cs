@@ -1,3 +1,4 @@
+// File: Marathon/NinjaMotionResolver.cs
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -21,6 +22,7 @@ namespace SilentTools
         };
 
         public static float BamsToDegrees(int bamAngle) => (float)((double)bamAngle * (180.0 / 32768.0));
+        public static float Bams32ToDegrees(int bam32Angle) => (float)((double)bam32Angle * (360.0 / 65536.0));
         public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
 
         public static void ResolveLinkedMotions(
@@ -114,25 +116,15 @@ namespace SilentTools
                         NinjaNext loader = new NinjaNext();
                         loader.Load(candidatePath);
 
-                        List<string> nodeNames = null;
-                        if (loader.Data.NodeNameList != null && loader.Data.NodeNameList.NinjaNodeNames != null)
-                        {
-                            nodeNames = loader.Data.NodeNameList.NinjaNodeNames;
-                        }
-                        else if (loader.Data.Object != null && loader.Data.Object.Nodes != null)
-                        {
-                            nodeNames = new List<string>();
-                            for (int i = 0; i < loader.Data.Object.Nodes.Count; i++)
-                            {
-                                string nName = loader.Data.Object.Nodes[i].Name;
-                                nodeNames.Add(!string.IsNullOrEmpty(nName) ? nName : $"Node_{i:0000}");
-                            }
-                        }
-
-                        if (nodeNames != null && nodeNames.Count > 0)
+                        if (loader.Data.Object != null && loader.Data.Object.Nodes != null && loader.Data.Object.Nodes.Count > 0)
                         {
                             if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
-                            return nodeNames.ToArray();
+                            return ComputeNodeHierarchyPaths(loader.Data.Object.Nodes);
+                        }
+                        else if (loader.Data.NodeNameList != null && loader.Data.NodeNameList.NinjaNodeNames != null)
+                        {
+                            if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
+                            return loader.Data.NodeNameList.NinjaNodeNames.ToArray();
                         }
                     }
                     catch (System.Exception ex)
@@ -143,6 +135,32 @@ namespace SilentTools
             }
 
             return new string[0];
+        }
+
+        public static string[] ComputeNodeHierarchyPaths(List<NinjaNode> nodes)
+        {
+            if (nodes == null || nodes.Count == 0) return new string[0];
+
+            string[] paths = new string[nodes.Count];
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                int curr = i;
+                List<string> parts = new List<string>();
+                while (curr >= 0 && curr < nodes.Count)
+                {
+                    NinjaNode node = nodes[curr];
+                    int parentIdx = node.ParentIndex;
+                    string name = !string.IsNullOrEmpty(node.Name) ? node.Name : $"Node_{curr:0000}";
+
+                    if (parentIdx == -1) // Root node
+                        break;
+
+                    parts.Insert(0, name);
+                    curr = parentIdx;
+                }
+                paths[i] = string.Join("/", parts);
+            }
+            return paths;
         }
 
         public static AnimationClip ResolveMotion(
@@ -202,10 +220,8 @@ namespace SilentTools
                     targetPath = nodeHierarchyTargets[subMotion.NodeIndex];
                 }
 
-                ImportSubMotionCurves(subMotion, targetPath, clip, timeScale, scale);
+                ImportSubMotionCurves(subMotion, targetPath, clip, timeScale, scale, motionData.Type);
             }
-
-            clip.EnsureQuaternionContinuity();
 
             var clipSettings = AnimationUtility.GetAnimationClipSettings(clip);
             if (motionData.Type.HasFlag(MotionType.NND_MOTIONTYPE_NOREPEAT))
@@ -236,9 +252,19 @@ namespace SilentTools
             return path;
         }
 
-        private static void ImportSubMotionCurves(NinjaSubMotion subMotion, string targetPath, AnimationClip clip, float timeScale, float scale)
+        private static void ImportSubMotionCurves(
+            NinjaSubMotion subMotion,
+            string targetPath,
+            AnimationClip clip,
+            float timeScale,
+            float scale,
+            MotionType parentMotionType)
         {
             if (subMotion.Keyframes == null || subMotion.Keyframes.Count == 0) return;
+
+            bool isNodeMotion = (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_NODE
+                             || (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
+            bool isMaterialMotion = (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
 
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_VECTOR)
             {
@@ -252,7 +278,7 @@ namespace SilentTools
                     float time = (kf.Frame / 60.0f) * timeScale;
                     Vector3 val = kf.Value;
 
-                    if (subMotion.Type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK))
+                    if (isNodeMotion && (subMotion.Type & SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) != 0)
                     {
                         val.x *= -1f * scale;
                         val.y *= scale;
@@ -268,10 +294,23 @@ namespace SilentTools
                 ApplyCurveSettings(curveY, subMotion.InterpolationType);
                 ApplyCurveSettings(curveZ, subMotion.InterpolationType);
 
-                string prefix = subMotion.Type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) ? "localPosition" : "localScale";
-                clip.SetCurve(targetPath, typeof(Transform), $"{prefix}.x", curveX);
-                clip.SetCurve(targetPath, typeof(Transform), $"{prefix}.y", curveY);
-                clip.SetCurve(targetPath, typeof(Transform), $"{prefix}.z", curveZ);
+                if (isNodeMotion)
+                {
+                    bool isTrans = (subMotion.Type & SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) != 0;
+                    string prefix = isTrans ? "localPosition" : "localScale";
+                    clip.SetCurve(targetPath, typeof(Transform), $"{prefix}.x", curveX);
+                    clip.SetCurve(targetPath, typeof(Transform), $"{prefix}.y", curveY);
+                    clip.SetCurve(targetPath, typeof(Transform), $"{prefix}.z", curveZ);
+                }
+                else if (isMaterialMotion)
+                {
+                    if ((subMotion.Type & SubMotionType.NND_SMOTTYPE_DIFFUSE_MASK) != 0)
+                    {
+                        clip.SetCurve(targetPath, typeof(Renderer), "material._Color.r", curveX);
+                        clip.SetCurve(targetPath, typeof(Renderer), "material._Color.g", curveY);
+                        clip.SetCurve(targetPath, typeof(Renderer), "material._Color.b", curveZ);
+                    }
+                }
                 return;
             }
 
@@ -281,8 +320,6 @@ namespace SilentTools
                 AnimationCurve curveY = new AnimationCurve();
                 AnimationCurve curveZ = new AnimationCurve();
 
-                float lastX = 0f, lastY = 0f, lastZ = 0f;
-
                 for (int i = 0; i < subMotion.Keyframes.Count; i++)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)subMotion.Keyframes[i];
@@ -290,16 +327,7 @@ namespace SilentTools
 
                     float rawX = BamsToDegrees(kf.Value1);
                     float rawY = -BamsToDegrees(kf.Value2);
-                    float rawZ = BamsToDegrees(kf.Value3);
-
-                    if (i > 0)
-                    {
-                        rawX = UnwrapAngle(lastX, rawX);
-                        rawY = UnwrapAngle(lastY, rawY);
-                        rawZ = UnwrapAngle(lastZ, rawZ);
-                    }
-
-                    lastX = rawX; lastY = rawY; lastZ = rawZ;
+                    float rawZ = -BamsToDegrees(kf.Value3);
 
                     curveX.AddKey(new Keyframe(time, rawX));
                     curveY.AddKey(new Keyframe(time, rawY));
@@ -316,21 +344,25 @@ namespace SilentTools
                 return;
             }
 
-            string targetProp = GetTargetProperty(subMotion.Type);
+            string targetProp = GetTargetProperty(subMotion.Type, parentMotionType);
             if (string.IsNullOrEmpty(targetProp)) return;
 
             Keyframe[] kfs = new Keyframe[subMotion.Keyframes.Count];
-            float lastVal = 0f;
 
             for (int i = 0; i < subMotion.Keyframes.Count; i++)
             {
                 var kf = subMotion.Keyframes[i];
                 float time = 0f, val = 0f;
 
-                if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT fKf)
+                if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32Kf)
+                {
+                    time = (s32Kf.Frame / 60.0f) * timeScale;
+                    val = ((subMotion.Type & SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32) != 0) ? Bams32ToDegrees(s32Kf.Value) : s32Kf.Value;
+                }
+                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT fKf)
                 {
                     time = (fKf.Frame / 60.0f) * timeScale;
-                    val = subMotion.Type.HasFlag(SubMotionType.NND_SMOTTYPE_ANGLE_RADIAN) ? RadiansToDegrees(fKf.Value) : fKf.Value;
+                    val = ((subMotion.Type & SubMotionType.NND_SMOTTYPE_ANGLE_RADIAN) != 0) ? RadiansToDegrees(fKf.Value) : fKf.Value;
                 }
                 else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16Kf)
                 {
@@ -339,13 +371,7 @@ namespace SilentTools
                 }
 
                 if (targetProp.Contains("Position")) val *= scale;
-                if (targetProp.Contains("localPosition.x") || targetProp.Contains("localEulerAnglesRaw.y")) val *= -1f;
-
-                if (i > 0 && targetProp.Contains("localEulerAnglesRaw"))
-                {
-                    val = UnwrapAngle(lastVal, val);
-                }
-                lastVal = val;
+                if (targetProp.Contains("localPosition.x") || targetProp.Contains("localEulerAnglesRaw.y") || targetProp.Contains("localEulerAnglesRaw.z")) val *= -1f;
 
                 kfs[i] = new Keyframe(time, val);
             }
@@ -355,23 +381,34 @@ namespace SilentTools
             clip.SetCurve(targetPath, typeof(Transform), targetProp, curve);
         }
 
-        private static float UnwrapAngle(float prev, float current)
+        private static string GetTargetProperty(SubMotionType subType, MotionType parentMotionType)
         {
-            float diff = Mathf.Repeat(current - prev + 180f, 360f) - 180f;
-            return prev + diff;
-        }
+            bool isNodeMotion = (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_NODE
+                             || (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
+            bool isMaterialMotion = (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
 
-        private static string GetTargetProperty(SubMotionType type)
-        {
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_X)) return "localPosition.x";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_Y)) return "localPosition.y";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_TRANSLATION_Z)) return "localPosition.z";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_X)) return "localEulerAnglesRaw.x";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_Y)) return "localEulerAnglesRaw.y";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_ROTATION_Z)) return "localEulerAnglesRaw.z";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_SCALING_X)) return "localScale.x";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_SCALING_Y)) return "localScale.y";
-            if (type.HasFlag(SubMotionType.NND_SMOTTYPE_SCALING_Z)) return "localScale.z";
+            if (isNodeMotion)
+            {
+                if ((subType & SubMotionType.NND_SMOTTYPE_TRANSLATION_X) != 0) return "localPosition.x";
+                if ((subType & SubMotionType.NND_SMOTTYPE_TRANSLATION_Y) != 0) return "localPosition.y";
+                if ((subType & SubMotionType.NND_SMOTTYPE_TRANSLATION_Z) != 0) return "localPosition.z";
+                if ((subType & SubMotionType.NND_SMOTTYPE_ROTATION_X) != 0) return "localEulerAnglesRaw.x";
+                if ((subType & SubMotionType.NND_SMOTTYPE_ROTATION_Y) != 0) return "localEulerAnglesRaw.y";
+                if ((subType & SubMotionType.NND_SMOTTYPE_ROTATION_Z) != 0) return "localEulerAnglesRaw.z";
+                if ((subType & SubMotionType.NND_SMOTTYPE_SCALING_X) != 0) return "localScale.x";
+                if ((subType & SubMotionType.NND_SMOTTYPE_SCALING_Y) != 0) return "localScale.y";
+                if ((subType & SubMotionType.NND_SMOTTYPE_SCALING_Z) != 0) return "localScale.z";
+            }
+            else if (isMaterialMotion)
+            {
+                if ((subType & SubMotionType.NND_SMOTTYPE_DIFFUSE_R) != 0) return "material._Color.r";
+                if ((subType & SubMotionType.NND_SMOTTYPE_DIFFUSE_G) != 0) return "material._Color.g";
+                if ((subType & SubMotionType.NND_SMOTTYPE_DIFFUSE_B) != 0) return "material._Color.b";
+                if ((subType & SubMotionType.NND_SMOTTYPE_ALPHA) != 0) return "material._Color.a";
+                if ((subType & SubMotionType.NND_SMOTTYPE_OFFSET_U) != 0) return "material._MainTex_ST.z";
+                if ((subType & SubMotionType.NND_SMOTTYPE_OFFSET_V) != 0) return "material._MainTex_ST.w";
+            }
+
             return "";
         }
 
