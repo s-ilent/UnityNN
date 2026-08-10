@@ -44,7 +44,8 @@ namespace SilentTools
                 targets
             );
 
-            ctx.AddObjectToAsset("main", clip);
+            Texture2D icon = NinjaIconResolver.GetIconForExtension(".xnm");
+            ctx.AddObjectToAsset("main", clip, icon);
             ctx.SetMainObject(clip);
         }
     }

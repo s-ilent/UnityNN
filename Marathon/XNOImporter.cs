@@ -48,7 +48,8 @@ namespace SilentTools
                 m_MaterialSearchPath
             );
 
-            ctx.AddObjectToAsset("main", rootGO);
+            Texture2D icon = NinjaIconResolver.GetIconForExtension(".xno");
+            ctx.AddObjectToAsset("main", rootGO, icon);
             ctx.SetMainObject(rootGO);
         }
 

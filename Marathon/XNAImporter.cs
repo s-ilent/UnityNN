@@ -127,7 +127,8 @@ namespace SilentTools
                 Animator animator = rootGO.AddComponent<Animator>();
             }
 
-            ctx.AddObjectToAsset("main", rootGO);
+            Texture2D icon = NinjaIconResolver.GetIconForExtension(".xna");
+            ctx.AddObjectToAsset("main", rootGO, icon);
             ctx.SetMainObject(rootGO);
         }
     }
