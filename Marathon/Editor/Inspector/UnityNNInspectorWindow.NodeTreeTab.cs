@@ -1,6 +1,5 @@
 using UnityEngine;
 using UnityEditor;
-using Marathon.Formats.Mesh.Ninja;
 
 namespace SilentTools.Editor
 {
@@ -9,20 +8,12 @@ namespace SilentTools.Editor
         #region Node Tree Tab
         private void DrawNodeTreeTab()
         {
-            if (!m_Context.IsNinjaAsset)
+            if (!m_Context.IsNinjaAsset || m_Context.NinjaData.Data.Object == null || m_Context.NinjaData.Data.Object.Nodes == null)
             {
-                EditorGUILayout.HelpBox("Select a Ninja asset to view the Node Tree.", MessageType.Info);
                 return;
             }
 
-            var data = m_LoadedNinjaData.Data;
-            if (data.Object == null || data.Object.Nodes == null)
-            {
-                EditorGUILayout.HelpBox("No Object/Node tree data present in this file.", MessageType.Info);
-                return;
-            }
-
-            var nodes = data.Object.Nodes;
+            var nodes = m_Context.NinjaData.Data.Object.Nodes;
 
             EditorGUILayout.LabelField("Node Tree", EditorStyles.boldLabel);
 
@@ -31,8 +22,7 @@ namespace SilentTools.Editor
             if (GUILayout.Button(m_ExpandAllNodes ? "Collapse All" : "Expand All", GUILayout.Width(100)))
             {
                 m_ExpandAllNodes = !m_ExpandAllNodes;
-                for (int i = 0; i < nodes.Count; i++)
-                    m_NodeFoldouts[i] = m_ExpandAllNodes;
+                for (int i = 0; i < nodes.Count; i++) m_NodeFoldouts[i] = m_ExpandAllNodes;
             }
             EditorGUILayout.EndHorizontal();
 
@@ -58,45 +48,27 @@ namespace SilentTools.Editor
                     continue;
                 }
 
-                if (!m_NodeFoldouts.ContainsKey(i))
-                    m_NodeFoldouts[i] = m_ExpandAllNodes;
+                if (!m_NodeFoldouts.ContainsKey(i)) m_NodeFoldouts[i] = m_ExpandAllNodes;
 
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-                m_NodeFoldouts[i] = EditorGUILayout.Foldout(
-                    m_NodeFoldouts[i],
-                    $"[{i}] {displayName} (Type: {n.Type})",
-                    true
-                );
+                m_NodeFoldouts[i] = EditorGUILayout.Foldout(m_NodeFoldouts[i], $"[{i}] {displayName}", true);
 
                 if (m_NodeFoldouts[i])
                 {
                     EditorGUI.indentLevel++;
                     EditorGUILayout.LabelField("Name:", n.Name ?? "");
-                    EditorGUILayout.LabelField("Node Type:", n.Type.ToString());
-                    EditorGUILayout.LabelField("Matrix Index:", n.MatrixIndex.ToString());
-                    EditorGUILayout.LabelField("User Defined:", n.UserDefined.ToString("X8"));
+                    
+                    DrawCleanFlagsLabel(n.Type, "Node Flags:");
 
-                    EditorGUILayout.Space();
-                    EditorGUILayout.LabelField("Hierarchy Indices:", EditorStyles.boldLabel);
-                    EditorGUILayout.LabelField($"Parent: {n.ParentIndex} | Child: {n.ChildIndex} | Sibling: {n.SiblingIndex}");
+                    EditorGUILayout.Space(2);
+                    EditorGUILayout.LabelField("Hierarchy:", $"Parent: {n.ParentIndex} | Child: {n.ChildIndex} | Sibling: {n.SiblingIndex}");
 
-                    EditorGUILayout.Space();
-                    EditorGUILayout.LabelField("Transform:", EditorStyles.boldLabel);
                     EditorGUILayout.Vector3Field("Translation", n.Translation);
                     EditorGUILayout.Vector3Field("Rotation", n.Rotation);
                     EditorGUILayout.Vector3Field("Scaling", n.Scaling);
 
-                    EditorGUILayout.Space();
-                    EditorGUILayout.LabelField("Bounding Data:", EditorStyles.boldLabel);
-                    EditorGUILayout.Vector3Field("Center", n.Center);
-                    EditorGUILayout.FloatField("Radius", n.Radius);
-                    EditorGUILayout.Vector3Field("Bounding Box", n.BoundingBox);
-
-                    EditorGUILayout.Space();
                     EditorGUILayout.LabelField("Inverse Initial Matrix:", EditorStyles.boldLabel);
                     DrawMatrix4x4ReadOnly(n.InvInitMatrix);
-
                     EditorGUI.indentLevel--;
                 }
 

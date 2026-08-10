@@ -5,72 +5,43 @@ namespace SilentTools.Editor
 {
     public partial class UnityNNInspectorWindow : EditorWindow
     {
-        #region Camera, Light & Effects Tab
+        #region Misc Tab
         private void DrawMiscTab()
         {
-            if (!m_Context.IsNinjaAsset)
-            {
-                EditorGUILayout.HelpBox("Select a Ninja asset to view Camera, Light & Effects.", MessageType.Info);
-                return;
-            }
+            if (!m_Context.IsNinjaAsset) return;
 
-            var data = m_LoadedNinjaData.Data;
+            EnsureStyles();
+            var data = m_Context.NinjaData.Data;
 
-            if (data.Camera == null && data.Light == null && data.EffectList == null && data.NodeNameList == null)
-            {
-                EditorGUILayout.HelpBox("No Camera, Light, Effect or Node Name data present in this file.", MessageType.Info);
-                return;
-            }
+            if (data.Camera != null) EditorGUILayout.LabelField("Camera Type:", CleanEnumString(data.Camera.Type));
+            if (data.Light != null) EditorGUILayout.LabelField("Light Type:", CleanEnumString(data.Light.Type));
 
-            if (data.Camera != null)
-            {
-                EditorGUILayout.LabelField("Camera Data (NXCA)", EditorStyles.boldLabel);
-                EditorGUI.indentLevel++;
-                EditorGUILayout.LabelField("Camera Type:", data.Camera.Type.ToString());
-                EditorGUILayout.Vector3Field("Vector [1]", data.Camera.UnknownVector3_1);
-                EditorGUILayout.Vector3Field("Vector [2]", data.Camera.UnknownVector3_2);
-                EditorGUI.indentLevel--;
-                EditorGUILayout.Space();
-            }
-
-            if (data.Light != null)
-            {
-                EditorGUILayout.LabelField("Light Data (NXLI)", EditorStyles.boldLabel);
-                EditorGUI.indentLevel++;
-                EditorGUILayout.LabelField("Light Type:", data.Light.Type.ToString());
-                EditorGUILayout.Vector3Field("Vector [1]", data.Light.UnknownVector3_1);
-                EditorGUILayout.Vector3Field("Vector [2]", data.Light.UnknownVector3_2);
-                EditorGUI.indentLevel--;
-                EditorGUILayout.Space();
-            }
-
-            if (data.EffectList != null)
-            {
-                EditorGUILayout.LabelField("Effect List (NXEF)", EditorStyles.boldLabel);
-                EditorGUI.indentLevel++;
-                if (data.EffectList.NinjaEffectFiles != null)
-                {
-                    for (int i = 0; i < data.EffectList.NinjaEffectFiles.Count; i++)
-                    {
-                        var ef = data.EffectList.NinjaEffectFiles[i];
-                        if (ef != null) EditorGUILayout.LabelField($"[{i}] Type: {ef.Type} | File: {ef.FileName ?? ""}");
-                    }
-                }
-                EditorGUI.indentLevel--;
-                EditorGUILayout.Space();
-            }
-
+            // Structured 2-Column Table List View for NXNN
             if (data.NodeNameList != null && data.NodeNameList.NinjaNodeNames != null)
             {
-                EditorGUILayout.LabelField("Node Name List (NXNN)", EditorStyles.boldLabel);
-                EditorGUI.indentLevel++;
-                EditorGUILayout.LabelField("Total Names:", data.NodeNameList.NinjaNodeNames.Count.ToString());
+                EditorGUILayout.Space();
+                var nodeNames = data.NodeNameList.NinjaNodeNames;
 
-                for (int i = 0; i < data.NodeNameList.NinjaNodeNames.Count; i++)
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField($"Node Name List (NXNN) - {nodeNames.Count} Names", EditorStyles.boldLabel);
+
+                // Table Header
+                Rect headerRect = EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+                GUILayout.Label(" Index", EditorStyles.miniBoldLabel, GUILayout.Width(60));
+                GUILayout.Label("Node Name String", EditorStyles.miniBoldLabel, GUILayout.ExpandWidth(true));
+                EditorGUILayout.EndHorizontal();
+
+                for (int i = 0; i < nodeNames.Count; i++)
                 {
-                    EditorGUILayout.LabelField($"[{i}]: {data.NodeNameList.NinjaNodeNames[i] ?? ""}");
+                    GUIStyle rowBg = (i % 2 == 0) ? evenStyle : oddStyle;
+                    EditorGUILayout.BeginHorizontal(rowBg, GUILayout.Height(18));
+
+                    GUILayout.Label($"[{i:0000}]", EditorStyles.miniBoldLabel, GUILayout.Width(60));
+                    GUILayout.Label(nodeNames[i] ?? "", EditorStyles.label, GUILayout.ExpandWidth(true));
+
+                    EditorGUILayout.EndHorizontal();
                 }
-                EditorGUI.indentLevel--;
+                EditorGUILayout.EndVertical();
             }
         }
         #endregion

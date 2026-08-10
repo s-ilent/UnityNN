@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEditor;
+using System.Collections.Generic;
 
 namespace SilentTools.Editor
 {
@@ -8,20 +9,14 @@ namespace SilentTools.Editor
         #region REL Tab
         private void DrawRelTab()
         {
-            if (!m_Context.IsRelAsset)
-            {
-                EditorGUILayout.HelpBox("Select a .rel file to view stage layout, lighting, or spawn data.", MessageType.Info);
-                return;
-            }
+            if (!m_Context.IsRelAsset) return;
 
             object parsedData = m_Context.RelData;
             RelFileType relType = m_Context.RelType;
 
-            EditorGUILayout.LabelField($"REL Stage Data ({relType})", EditorStyles.boldLabel);
-
             if (parsedData is SetFileData setFile)
             {
-                EditorGUILayout.LabelField($"Area ID: {setFile.AreaID} | Total Maps: {setFile.MapData.Count}");
+                EditorGUILayout.LabelField($"Stage Objects Layout (Area ID: {setFile.AreaID}, Maps: {setFile.MapData.Count})", EditorStyles.boldLabel);
                 foreach (var map in setFile.MapData)
                 {
                     EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -42,6 +37,7 @@ namespace SilentTools.Editor
             }
             else if (parsedData is LndEffectData effect)
             {
+                EditorGUILayout.LabelField("Environment & Lighting", EditorStyles.boldLabel);
                 EditorGUILayout.LabelField($"Fog Range: {effect.Fog.NearPlane:F1}m - {effect.Fog.FarPlane:F1}m");
                 EditorGUILayout.ColorField("Fog Color", effect.Fog.FogColor);
                 EditorGUILayout.ColorField("Ambient Light", effect.PlayerLightAmbient.LightColor);
@@ -49,7 +45,7 @@ namespace SilentTools.Editor
             }
             else if (parsedData is EnemyLayoutData enemyLayout)
             {
-                EditorGUILayout.LabelField($"Total Spawn Waves: {enemyLayout.Spawns.Count}");
+                EditorGUILayout.LabelField($"Enemy Spawns ({enemyLayout.Spawns.Count} Waves)", EditorStyles.boldLabel);
                 for (int i = 0; i < enemyLayout.Spawns.Count; i++)
                 {
                     EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -59,6 +55,14 @@ namespace SilentTools.Editor
                         EditorGUILayout.LabelField($"  Monster [{m.MonsterNum:000}] Count: {m.Count} | Level Mod: {m.LevelModifier}");
                     }
                     EditorGUILayout.EndVertical();
+                }
+            }
+            else if (parsedData is List<QuestListingData> questList)
+            {
+                EditorGUILayout.LabelField($"Quest Listing ({questList.Count} Quests)", EditorStyles.boldLabel);
+                foreach (var q in questList)
+                {
+                    EditorGUILayout.LabelField($"  Quest [{q.QuestNumber:000}]: {q.FileName}");
                 }
             }
         }
