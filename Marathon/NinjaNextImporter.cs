@@ -3,6 +3,7 @@ using UnityEditor;
 using UnityEditor.AssetImporters;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using Marathon.Formats.Mesh.Ninja;
 
 namespace SilentTools
@@ -115,41 +116,89 @@ namespace SilentTools
             // -----------------------------------------------------------------
             // 4. Embedded / Linked Animation Resolution for Model Packages
             // -----------------------------------------------------------------
-            if (rootGO != null && m_ImportAnimation)
+            if (rootGO != null)
             {
-                NinjaMotion nodeMotion = loader.Data.Motion;
-                NinjaMotion matMotion = loader.Data.MaterialMotion;
-
-                NinjaMotionResolver.ResolveLinkedMotions(ctx.assetPath, ctx, out NinjaMotion extraNodeMot, out NinjaMotion extraMatMot, out _, out _);
-                if (nodeMotion == null) nodeMotion = extraNodeMot;
-                if (matMotion == null) matMotion = extraMatMot;
-
-                if (nodeMotion != null)
+                if (m_ImportAnimation)
                 {
-                    AnimationClip nodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", m_Scale, rootGO, nodeTransforms);
-                    if (nodeClip != null) ctx.AddObjectToAsset("NodeAnimation", nodeClip);
+                    NinjaMotion nodeMotion = loader.Data.Motion;
+                    NinjaMotion matMotion = loader.Data.MaterialMotion;
+
+                    NinjaMotionResolver.ResolveLinkedMotions(ctx.assetPath, ctx, out NinjaMotion extraNodeMot, out NinjaMotion extraMatMot, out _, out _);
+                    if (nodeMotion == null) nodeMotion = extraNodeMot;
+                    if (matMotion == null) matMotion = extraMatMot;
+
+                    if (nodeMotion != null)
+                    {
+                        AnimationClip nodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", m_Scale, rootGO, nodeTransforms);
+                        if (nodeClip != null) ctx.AddObjectToAsset("NodeAnimation", nodeClip);
+                    }
+
+                    if (matMotion != null)
+                    {
+                        AnimationClip matClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", m_Scale, rootGO, nodeTransforms);
+                        if (matClip != null) ctx.AddObjectToAsset("MaterialAnimation", matClip);
+                    }
+
+                    if (nodeMotion != null || matMotion != null)
+                    {
+                        rootGO.AddComponent<Animator>();
+                    }
                 }
 
-                if (matMotion != null)
-                {
-                    AnimationClip matClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", m_Scale, rootGO, nodeTransforms);
-                    if (matClip != null) ctx.AddObjectToAsset("MaterialAnimation", matClip);
-                }
-
-                if (nodeMotion != null || matMotion != null)
-                {
-                    rootGO.AddComponent<Animator>();
-                }
+                ctx.AddObjectToAsset("main", rootGO, icon);
+                ctx.SetMainObject(rootGO);
+                return;
             }
 
-            // Fallback for metadata / support assets (.xnt, .xnn, etc.)
-            if (rootGO == null)
+            // -----------------------------------------------------------------
+            // 5. Non-instantiable Support / Metadata Assets (.xnt, .xnn, etc.)
+            // -----------------------------------------------------------------
+            TextAsset textAsset = CreateSummaryTextAsset(loader.Data, assetName, ext);
+            ctx.AddObjectToAsset("main", textAsset, icon);
+            ctx.SetMainObject(textAsset);
+        }
+
+        private static TextAsset CreateSummaryTextAsset(NinjaNext.FormatData data, string assetName, string extension)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            if (data.TextureList != null && data.TextureList.NinjaTextureFiles != null)
             {
-                rootGO = new GameObject(assetName);
+                sb.AppendLine($"Ninja Texture List ({assetName}{extension})");
+                sb.AppendLine($"Textures ({data.TextureList.NinjaTextureFiles.Count}):");
+                for (int i = 0; i < data.TextureList.NinjaTextureFiles.Count; i++)
+                {
+                    var tf = data.TextureList.NinjaTextureFiles[i];
+                    sb.AppendLine($"  [{i:00}] {tf.FileName} (GlobalIndex: {tf.GlobalIndex}, Bank: {tf.Bank})");
+                }
+            }
+            else if (data.NodeNameList != null && data.NodeNameList.NinjaNodeNames != null)
+            {
+                sb.AppendLine($"Ninja Node Name List ({assetName}{extension})");
+                sb.AppendLine($"Names ({data.NodeNameList.NinjaNodeNames.Count}):");
+                for (int i = 0; i < data.NodeNameList.NinjaNodeNames.Count; i++)
+                {
+                    sb.AppendLine($"  [{i:0000}] {data.NodeNameList.NinjaNodeNames[i]}");
+                }
+            }
+            else if (data.EffectList != null)
+            {
+                sb.AppendLine($"Ninja Effect List ({assetName}{extension})");
+                sb.AppendLine($"Effects ({data.EffectList.NinjaEffectFiles?.Count ?? 0}):");
+                if (data.EffectList.NinjaEffectFiles != null)
+                {
+                    for (int i = 0; i < data.EffectList.NinjaEffectFiles.Count; i++)
+                    {
+                        sb.AppendLine($"  [{i:00}] {data.EffectList.NinjaEffectFiles[i].FileName}");
+                    }
+                }
+            }
+            else
+            {
+                sb.AppendLine($"Ninja Next Support Asset: {assetName}{extension}");
             }
 
-            ctx.AddObjectToAsset("main", rootGO, icon);
-            ctx.SetMainObject(rootGO);
+            return new TextAsset(sb.ToString());
         }
     }
 }
