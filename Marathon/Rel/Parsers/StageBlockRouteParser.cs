@@ -23,7 +23,7 @@ namespace SilentTools
             for (int i = 0; i < count; i++)
             {
                 int val = reader.ReadInt32();
-                data.Offsets.Add((int)RelResolver.ResolveOffset(val, fileSize));
+                data.Offsets.Add((int)RelResolver.ResolveOffset(val, fileSize, reader.Offset));
             }
 
             return data;

@@ -9,7 +9,16 @@ namespace SilentTools
         {
             List<QuestListingData> list = new List<QuestListingData>();
             uint listLoc = (uint)(reader.ReadInt32() - baseAddr);
-            int listCount = reader.ReadInt32();
+            uint listCountVal = reader.ReadUInt32();
+
+            int listCount = (int)listCountVal;
+            uint rebasedListEnd = (uint)(listCountVal - baseAddr);
+
+            // If the value acts as a rebased list-end address, calculate actual count
+            if (rebasedListEnd > listLoc && (rebasedListEnd - listLoc) <= 0x5000)
+            {
+                listCount = (int)((rebasedListEnd - listLoc) / 8);
+            }
 
             for (int i = 0; i < listCount; i++)
             {

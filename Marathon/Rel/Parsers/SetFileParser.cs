@@ -10,7 +10,7 @@ namespace SilentTools
             SetFileData data = new SetFileData();
             data.AreaID = reader.ReadInt16();
             short mapCount = reader.ReadInt16();
-            uint mainListPointer = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint mainListPointer = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
 
             for (int i = 0; i < mapCount; i++)
             {
@@ -19,7 +19,7 @@ namespace SilentTools
                 SetMapListing map = new SetMapListing();
                 map.MapNumber = reader.ReadInt16();
                 short listCount = reader.ReadInt16();
-                uint listPtr = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+                uint listPtr = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
 
                 for (int j = 0; j < listCount; j++)
                 {
@@ -35,7 +35,7 @@ namespace SilentTools
                     header.UnknownPairedShort1 = reader.ReadInt16();
                     header.UnknownPairedShort2 = reader.ReadInt16();
                     short listEntryCount = reader.ReadInt16();
-                    uint objectListLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+                    uint objectListLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
 
                     for (int k = 0; k < listEntryCount; k++)
                     {
@@ -51,7 +51,7 @@ namespace SilentTools
                         obj.Position = reader.ReadVector3();
                         obj.Rotation = reader.ReadVector3();
                         int metadataLength = reader.ReadInt32();
-                        uint metadataLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+                        uint metadataLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
 
                         if (metadataLength > 0 && metadataLoc < reader.BaseStream.Length)
                         {

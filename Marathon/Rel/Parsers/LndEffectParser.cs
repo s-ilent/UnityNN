@@ -8,13 +8,13 @@ namespace SilentTools
         public static LndEffectData Parse(BinaryReaderEx reader, uint fileSize)
         {
             LndEffectData data = new LndEffectData();
-            uint l1 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
-            uint l2 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
-            uint l3 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
-            uint gradLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
-            uint fogLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
-            uint sunLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
-            uint blurLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize);
+            uint l1 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+            uint l2 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+            uint l3 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+            uint gradLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+            uint fogLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+            uint sunLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+            uint blurLoc = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
 
             if (l1 > 0 && l1 < fileSize) { reader.JumpTo(l1); data.PlayerLight1 = ReadLight(reader); }
             if (l2 > 0 && l2 < fileSize) { reader.JumpTo(l2); data.PlayerLight2 = ReadLight(reader); }
