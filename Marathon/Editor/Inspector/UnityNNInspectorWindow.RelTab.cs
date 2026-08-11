@@ -35,6 +35,21 @@ namespace SilentTools.Editor
                     EditorGUILayout.EndVertical();
                 }
             }
+            else if (parsedData is CollisionMeshData colData)
+            {
+                EditorGUILayout.LabelField($"Collision Mesh Geometry (Vertices: {colData.Vertices.Count}, Polygons: {colData.Polygons.Count})", EditorStyles.boldLabel);
+                EditorGUILayout.Space();
+                
+                for (int i = 0; i < Mathf.Min(colData.Polygons.Count, 15); i++)
+                {
+                    var poly = colData.Polygons[i];
+                    EditorGUILayout.LabelField($"  Polygon [{i}]: Indices ({poly.VertexIndices[0]}, {poly.VertexIndices[1]}, {poly.VertexIndices[2]}, {poly.VertexIndices[3]}) | Flags: 0x{poly.Flags:X8}");
+                }
+                if (colData.Polygons.Count > 15)
+                {
+                    EditorGUILayout.LabelField($"  ... and {colData.Polygons.Count - 15} more polygons.");
+                }
+            }
             else if (parsedData is LndEffectData effect)
             {
                 EditorGUILayout.LabelField("Environment & Lighting", EditorStyles.boldLabel);
@@ -42,6 +57,23 @@ namespace SilentTools.Editor
                 EditorGUILayout.ColorField("Fog Color", effect.Fog.FogColor);
                 EditorGUILayout.ColorField("Ambient Light", effect.PlayerLightAmbient.LightColor);
                 EditorGUILayout.ColorField("Player Light 1", effect.PlayerLight1.LightColor);
+            }
+            else if (parsedData is List<LndFogData> fogs)
+            {
+                EditorGUILayout.LabelField($"Fog Bank ({fogs.Count} Presets)", EditorStyles.boldLabel);
+                for (int i = 0; i < fogs.Count; i++)
+                {
+                    var fog = fogs[i];
+                    EditorGUILayout.LabelField($"  Fog [{i}]: Range {fog.NearPlane:F1}m - {fog.FarPlane:F1}m | Color: {fog.FogColor}");
+                }
+            }
+            else if (parsedData is LndCommonData common)
+            {
+                EditorGUILayout.LabelField("Map Scene Links (LndCommon)", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField($"  Linked NBL Filename Fragment: {common.NblFilenameFragment}");
+                EditorGUILayout.LabelField($"  Linked XNT Fragment 1: {common.XntFilenameFragment1}");
+                EditorGUILayout.LabelField($"  Linked XNT Fragment 2: {common.XntFilenameFragment2}");
+                EditorGUILayout.LabelField($"  Unknown Float: {common.UnknownFloat}");
             }
             else if (parsedData is EnemyLayoutData enemyLayout)
             {

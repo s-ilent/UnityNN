@@ -13,7 +13,21 @@ namespace SilentTools
         LndCommon,        // LndCommon.rel
         StageRouteBlock,  // LndBlock.rel / LndRoute.rel
         EnemyLayout,      // enemy*.rel / enemy*.xnr
-        QuestList         // filelist.rel
+        QuestList,        // filelist.rel
+        Collision         // collision.xnr / collision.rel
+    }
+
+    public class CollisionPolygon
+    {
+        public uint Flags { get; set; }
+        public ushort[] VertexIndices { get; set; } = new ushort[4];
+        public Vector4 Plane { get; set; }
+    }
+
+    public class CollisionMeshData
+    {
+        public List<Vector3> Vertices { get; set; } = new List<Vector3>();
+        public List<CollisionPolygon> Polygons { get; set; } = new List<CollisionPolygon>();
     }
 
     public class LndLightData
@@ -103,7 +117,8 @@ namespace SilentTools
 
     public class SetMapListing
     {
-        public short MapNumber { get; set; }
+        public short mapNumber; // Backwards compatibility field matching PSULib
+        public short MapNumber { get => mapNumber; set => mapNumber = value; }
         public List<SetListHeader> Headers { get; set; } = new List<SetListHeader>();
     }
 

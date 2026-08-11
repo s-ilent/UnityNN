@@ -379,8 +379,8 @@ namespace SilentTools.Editor
             if (m_Context.IsRelAsset)
             {
                 bool[] flags = new bool[m_RelTabNames.Length];
-                flags[0] = m_Context.RelData is SetFileData;
-                flags[1] = m_Context.RelData is LndEffectData || m_Context.RelData is List<LndFogData>;
+                flags[0] = m_Context.RelData is SetFileData || m_Context.RelData is CollisionMeshData;
+                flags[1] = m_Context.RelData is LndEffectData || m_Context.RelData is List<LndFogData> || m_Context.RelData is LndCommonData;
                 flags[2] = m_Context.RelData is EnemyLayoutData;
                 flags[3] = m_Context.RelData is List<QuestListingData>;
                 return flags;
