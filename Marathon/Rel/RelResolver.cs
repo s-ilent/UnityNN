@@ -7,16 +7,29 @@ namespace SilentTools
 {
     public static class RelResolver
     {
-        public static uint ResolveOffset(int ptr, uint fileSize)
+        public static uint ResolveOffset(int ptr, uint fileSize, uint baseAddr = 0)
         {
             if (ptr <= 0) return 0;
-            if (ptr <= fileSize) return (uint)ptr;
-
-            uint offset = (uint)ptr & 0xFFFF;
-            if (offset < fileSize)
-                return offset;
-
-            return (uint)(ptr % fileSize);
+        
+            if (baseAddr != 0 && (uint)ptr >= baseAddr)
+            {
+                uint resolved = (uint)(ptr - baseAddr);
+                if (resolved < fileSize)
+                {
+                    return resolved;
+                }
+            }
+        
+            if ((uint)ptr < fileSize)
+            {
+                return (uint)ptr;
+            }
+        
+            throw new System.IndexOutOfRangeException(
+                $"Raw Pointer: 0x{ptr:X8} (Dec: {ptr}), " +
+                $"Active Base Address: 0x{baseAddr:X8}, Resolved Offset: 0x{(ptr - (int)baseAddr):X8} is out of bounds " +
+                $"for payload size of {fileSize} bytes. "
+            );
         }
 
         public static RelFileType IdentifyRelType(string filename, byte[] rawData)
@@ -36,6 +49,13 @@ namespace SilentTools
                 return RelFileType.StageRouteBlock;
             if (lowerName.Contains("filelist"))
                 return RelFileType.QuestList;
+            if (lowerName.Contains("collision") || lowerName.Contains("colli"))
+                return RelFileType.Collision;
+
+            // Exclude non-layout parameter files from the layout importer
+            if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
+                return RelFileType.Unknown;
+
             if ((lowerName.StartsWith("enemy") || lowerName.Contains("param") || lowerName.Contains("data") || lowerName.Contains("drop") || lowerName.Contains("atk")) && (lowerName.EndsWith(".rel") || lowerName.EndsWith(".xnr")))
                 return RelFileType.EnemyLayout;
 
@@ -45,23 +65,55 @@ namespace SilentTools
         public static object ParseRelBytes(byte[] rawData, string filename, out RelFileType relType)
         {
             relType = IdentifyRelType(filename, rawData);
+            
+            // 1. Extract raw NXR chunk payload if wrapped in an NXIF container
+            byte[] payload = rawData;
             using (MemoryStream stream = new MemoryStream(rawData))
             {
                 BinaryReaderEx reader = new BinaryReaderEx(stream);
-
-                long headerStartPos = 0;
                 string sig = new string(reader.ReadChars(4));
+                long containerStart = -1;
 
-                if (sig != "NXIF" && !sig.EndsWith("IF") && sig != "NXR\0")
+                if (sig == "NXIF" || sig.EndsWith("IF"))
                 {
-                    if (stream.Length >= 0x60)
+                    containerStart = 0;
+                }
+                else if (stream.Length >= 0x60)
+                {
+                    reader.JumpTo(0x40);
+                    string innerSig = new string(reader.ReadChars(4));
+                    if (innerSig == "NXIF" || innerSig.EndsWith("IF"))
                     {
-                        reader.JumpTo(0x40);
-                        headerStartPos = 0x40;
+                        containerStart = 0x40;
                     }
                 }
 
-                reader.JumpTo(headerStartPos + 4);
+                if (containerStart >= 0)
+                {
+                    reader.JumpTo(containerStart + 0x0C);
+                    uint dataOffset = reader.ReadUInt32();
+                    long chunkStart = containerStart + dataOffset;
+
+                    reader.JumpTo(chunkStart + 4);
+                    uint chunkSize = reader.ReadUInt32();
+                    
+                    // The total size is chunkSize + 8 bytes (chunkID + chunkSize fields)
+                    uint totalChunkSize = chunkSize + 8; 
+
+                    if (chunkStart + totalChunkSize <= stream.Length)
+                    {
+                        payload = new byte[totalChunkSize];
+                        stream.Position = chunkStart;
+                        stream.Read(payload, 0, (int)totalChunkSize);
+                    }
+                }
+            }
+
+            // 2. Parse unwrapped binary payload
+            using (MemoryStream stream = new MemoryStream(payload))
+            {
+                BinaryReaderEx reader = new BinaryReaderEx(stream);
+                reader.JumpTo(4);
                 uint fileSize = (uint)stream.Length;
                 uint rawFileSizeField = reader.ReadUInt32();
                 uint headerLoc = reader.ReadUInt32();
@@ -69,7 +121,7 @@ namespace SilentTools
                 if ((rawFileSizeField & 0xFF000000) != 0 || headerLoc > stream.Length)
                 {
                     reader.IsBigEndian = true;
-                    reader.JumpTo(headerStartPos + 8);
+                    reader.JumpTo(8);
                     headerLoc = reader.ReadUInt32();
                 }
 
@@ -78,6 +130,7 @@ namespace SilentTools
                 {
                     baseAddr = headerLoc - 0x10;
                     headerLoc = 0x10;
+                    reader.Offset = baseAddr;
                 }
 
                 reader.JumpTo(headerLoc);
@@ -91,15 +144,17 @@ namespace SilentTools
                     case RelFileType.LndEnemyLight:
                         return LndEnemyLightParser.Parse(reader, fileSize);
                     case RelFileType.FogBank:
-                        return FogBankParser.Parse(reader, fileSize, headerLoc);
+                        return FogBankParser.Parse(reader, baseAddr, headerLoc);
                     case RelFileType.LndCommon:
-                        return LndCommonParser.Parse(reader, fileSize);
+                        return LndCommonParser.Parse(reader, baseAddr);
                     case RelFileType.StageRouteBlock:
                         return StageBlockRouteParser.Parse(reader, fileSize, headerLoc);
                     case RelFileType.EnemyLayout:
-                        return EnemyLayoutParser.Parse(reader, fileSize);
+                        return EnemyLayoutParser.Parse(reader, baseAddr);
                     case RelFileType.QuestList:
-                        return QuestListParser.Parse(reader, fileSize);
+                        return QuestListParser.Parse(reader, baseAddr);
+                    case RelFileType.Collision:
+                        return CollisionParser.Parse(reader, fileSize, headerLoc);
                     default:
                         return null;
                 }
@@ -133,6 +188,19 @@ namespace SilentTools
                     break;
                 case RelFileType.QuestList:
                     if (parsedData is List<QuestListingData> qList) BuildQuestListHierarchy(qList, rootGO);
+                    break;
+                case RelFileType.Collision:
+                    if (parsedData is CollisionMeshData colData)
+                    {
+                        Mesh mesh = CollisionParser.CreateUnityMesh(colData, scale, $"{assetName}_CollisionMesh");
+                        if (mesh != null)
+                        {
+                            MeshFilter mf = rootGO.AddComponent<MeshFilter>();
+                            mf.sharedMesh = mesh;
+                            MeshCollider mc = rootGO.AddComponent<MeshCollider>();
+                            mc.sharedMesh = mesh;
+                        }
+                    }
                     break;
             }
 
@@ -199,7 +267,7 @@ namespace SilentTools
             GameObject sunGO = new GameObject("Sun Light");
             sunGO.transform.SetParent(rootGO.transform, false);
             Light sunLight = sunGO.AddComponent<Light>();
-            sunLight.type = LightType.Directional;
+            sunLight.type = UnityEngine.LightType.Directional;
             sunLight.color = Color.white;
             if (data.SunPosition != Vector3.zero)
                 sunGO.transform.forward = -data.SunPosition.normalized;
@@ -267,7 +335,7 @@ namespace SilentTools
             GameObject lGO = new GameObject(name);
             lGO.transform.SetParent(parent, false);
             Light l = lGO.AddComponent<Light>();
-            l.type = LightType.Directional;
+            l.type = UnityEngine.LightType.Directional;
             l.color = lightData != null ? lightData.LightColor : Color.white;
             if (lightData != null && lightData.Direction != Vector3.zero)
                 lGO.transform.forward = -lightData.Direction.normalized;
