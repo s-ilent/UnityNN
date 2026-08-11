@@ -8,6 +8,8 @@
 // --------------------------------------------------------------------------
 // Uniform Properties (_SpecColor is provided by Lighting.cginc)
 // --------------------------------------------------------------------------
+half _Mode;
+
 half4 _Color;
 half4 _AmbientColor;
 sampler2D _MainTex;
@@ -97,7 +99,7 @@ struct v2f_nn
     float4 pos          : SV_POSITION;
     float4 uv0          : TEXCOORD0; // xy: MainTex, zw: MainTex2
     float4 uv1          : TEXCOORD1; // xy: MainTex3, zw: BumpMap
-    float3 worldPos     : TEXCOORD2;
+    float4 worldPos     : TEXCOORD2; // xyz: worldPos, w: fogFactor
     float3 worldNormal  : TEXCOORD3;
     half4 color        : COLOR;
     UNITY_SHADOW_COORDS(4)
@@ -126,6 +128,39 @@ half3 ApplyTextureBlend(half3 baseCol, half4 layerCol, float mode)
 // --------------------------------------------------------------------------
 // Vertex Shader
 // --------------------------------------------------------------------------
+half getFogType()
+{
+    half fogTypeID = 0;
+	#if defined(FOG_EXP2)
+	fogTypeID = -1;
+	#elif defined(FOG_EXP)
+	fogTypeID = 0;
+	#elif defined(FOG_LINEAR)
+	fogTypeID = 1;
+	#else
+	return 0;
+	#endif
+	return fogTypeID;
+}
+
+half setupPackedFogData(half clipPosZ)
+{
+	#if defined(FOG_EXP2)
+	#elif defined(FOG_EXP)
+	#elif defined(FOG_LINEAR)
+	#else
+	return 0;
+	#endif
+	
+    // Store fog value mapped to 0..1 range.
+	half outFog = UNITY_Z_0_FAR_FROM_CLIPSPACE(clipPosZ) / (_ProjectionParams.z + 32.0);
+
+	// Store fog type in integer component.
+	half fogTypeID = getFogType();
+	
+	return outFog + fogTypeID;
+}
+
 v2f_nn vert_nn(appdata_nn v)
 {
     v2f_nn o;
@@ -134,9 +169,10 @@ v2f_nn vert_nn(appdata_nn v)
     UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o);
 
     o.pos = UnityObjectToClipPos(v.vertex);
-    o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+    o.worldPos.xyz = mul(unity_ObjectToWorld, v.vertex).xyz;
+    o.worldPos.w = o.pos.z;
     o.worldNormal = UnityObjectToWorldNormal(v.normal);
-
+    
     o.uv0.xy = TRANSFORM_TEX(v.texcoord.xy, _MainTex);
     o.uv0.zw = TRANSFORM_TEX(v.texcoord.xy, _MainTex2);
     o.uv1.xy = TRANSFORM_TEX(v.texcoord.xy, _MainTex3);
@@ -249,6 +285,47 @@ void applyAlphaMask(inout half4 baseColor)
 // --------------------------------------------------------------------------
 // Consolidated Fragment Lighting
 // --------------------------------------------------------------------------
+void applyUnityFog(inout half3 col, half depth)
+{
+    half fogFactor = 1.0;
+    int fogType = 0;
+    #if defined(FOG_EXP2)
+	fogType = 3;
+	#elif defined(FOG_EXP)
+	fogType = 2;
+	#elif defined(FOG_LINEAR)
+	fogType = 1;
+	#else
+	return;
+	#endif
+	
+    // depth = frac(depth) * (_ProjectionParams.z + 32);
+
+    if (fogType == 1) // Is Linear fog active?
+    {
+        fogFactor = depth * unity_FogParams.z + unity_FogParams.w;
+    }
+    if (fogType == 2) // Is Exp fog active?
+    {
+        half exponent = unity_FogParams.y * depth;
+        fogFactor = exp2(-exponent);
+    }
+    if (fogType == 3) // Is Exp2 fog active?
+    {
+        half exponent_val = unity_FogParams.x * depth;
+        fogFactor = exp2(-exponent_val * exponent_val);
+    }
+
+    half3 appliedFogColor = unity_FogColor.rgb;
+
+    #if defined(UNITY_PASS_FORWARDADD)
+        appliedFogColor = fixed3(0,0,0);
+    #endif
+    if (_Mode == 4) appliedFogColor *= 0;
+
+    col.rgb = lerp(appliedFogColor, col.rgb, saturate(fogFactor));
+}
+
 half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 {
     UNITY_SETUP_INSTANCE_ID(i);
@@ -256,14 +333,18 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     MaterialInputs material = MyMaterialSetup(i, isFrontFace);
 
     applyAlphaMask(material.baseColor);
-
+    
+    float fogDepth = distance(_WorldSpaceCameraPos, i.worldPos);
+        
     if (_Unlit > 0.5)
     {
         if (isForwardAdd)
         {
             return half4(0, 0, 0, material.baseColor.a);
         }
-        return half4(16.0 * material.baseColor.rgb + material.emissive, material.baseColor.a);
+        half3 finalRGB = 16.0 * material.baseColor.rgb + material.emissive;
+        // applyUnityFog(finalRGB, fogDepth);
+        return half4(finalRGB, material.baseColor.a);
     }
 
     ShadingParams shading = (ShadingParams)0;
@@ -280,6 +361,13 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     half3 diffuse = UNITY_PI * _LightColor0.rgb;
     // Todo: Apply lighting to meshes with normals, but only apply color to meshes without.
     // * NdotL * shading.attenuation;
+    // We don't have a good way of telling if a mesh had normals before importing though... 
+    // Could send a material prop with the import data. But REALLY, there should be a material flag
+    // that specifies whether a mesh is "unlit" or "lit" or not. 
+    // I wonder if we could use the diffuse and ambient colour here. Problem is, the ambient colour and 
+    // diffuse colour are always the same in the meshes I've looked at. 
+    // The best choice is probably to fake it. 
+    diffuse = diffuse * lerp(0.5, 1.0, min(NdotL, shading.attenuation));
 
     half3 specular = half3(0, 0, 0);
     if (material.smoothness > 0.0)
@@ -297,6 +385,11 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 
     half3 ambient = ShadeSH9(half4(shading.normal, 1.0)) * _AmbientColor.rgb;
     half3 finalRGB = material.baseColor.rgb * (ambient + diffuse) + specular + material.emissive;
+
+    // Todo: In cg0005, there are reflections of cutout geometry using additive blending, but they 
+    // should have the cutout applied to them even though they're additive...
+
+    applyUnityFog(finalRGB, fogDepth);
 
     return half4(finalRGB, material.baseColor.a);
 }

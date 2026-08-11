@@ -73,13 +73,17 @@ Shader "NinjaNext/Standard"
             AlphaToMask [_AlphaToMask]
 
             CGPROGRAM
+            #ifndef UNITY_PASS_FORWARDBASE
+			#define UNITY_PASS_FORWARDBASE
+			#endif
+			
             #pragma vertex vert_nn
             #pragma fragment fragBase
             #pragma target 4.0
 
             #pragma multi_compile_fwdbase
-            #pragma multi_compile_fog
             #pragma multi_compile_instancing
+            #pragma multi_compile_fog
 
             #include "NN_Core.cginc"
             ENDCG
@@ -97,12 +101,16 @@ Shader "NinjaNext/Standard"
             AlphaToMask [_AlphaToMask]
 
             CGPROGRAM
+            #ifndef UNITY_PASS_FORWARDADD
+			#define UNITY_PASS_FORWARDADD
+			#endif
+			
             #pragma vertex vert_nn
             #pragma fragment fragAdd
             #pragma target 4.0
 
             #pragma multi_compile_fwdadd_fullshadows
-            #pragma multi_compile_fog
+            #pragma multi_compile_instancing
 
             #include "NN_Core.cginc"
             ENDCG
@@ -114,6 +122,7 @@ Shader "NinjaNext/Standard"
             Tags { "LightMode" = "ShadowCaster" }
 
             ZWrite On ZTest LEqual
+            AlphaToMask Off
 
             CGPROGRAM
             #pragma vertex vertShadowCaster
@@ -135,6 +144,7 @@ Shader "NinjaNext/Standard"
             float4 _MainTex_ST;
             float _AlphaTest;
             float _Cutoff;
+            half _Mode;
 
             v2f_shadow vertShadowCaster(appdata_base v)
             {
@@ -147,6 +157,7 @@ Shader "NinjaNext/Standard"
             float4 fragShadowCaster(v2f_shadow i) : SV_Target
             {
                 half4 col = tex2D(_MainTex, i.uv) * _Color;
+                if (_Mode > 1) clip(-1);
                 if (_AlphaTest > 0.5)
                 {
                     clip(col.a - _Cutoff);
@@ -182,6 +193,7 @@ Shader "NinjaNext/Standard"
             float4 _MainTex_ST;
             float _AlphaTest;
             float _Cutoff;
+            half _Mode;
 
             v2f_depth vertDepth(appdata_base v)
             {
@@ -194,6 +206,7 @@ Shader "NinjaNext/Standard"
             half4 fragDepth(v2f_depth i) : SV_Target
             {
                 half4 col = tex2D(_MainTex, i.uv) * _Color;
+                if (_Mode > 1) clip(-1);
                 if (_AlphaTest > 0.5)
                 {
                     clip(col.a - _Cutoff);
