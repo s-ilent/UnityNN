@@ -2,19 +2,6 @@ Shader "NinjaNext/Standard"
 {
     Properties
     {
-        // Render Pipeline State Controls
-        _Mode ("Rendering Mode", Float) = 0.0
-        [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Source Blend", Float) = 1.0
-        [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend ("Destination Blend", Float) = 0.0
-        [Enum(UnityEngine.Rendering.BlendOp)] _BlendOp ("Blend Operation", Float) = 0.0
-        [Enum(Off,0,On,1)] _ZWrite ("Depth Write", Float) = 1.0
-        [Enum(UnityEngine.Rendering.CompareFunction)] _ZTest ("Depth Test", Float) = 4.0
-        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 0.0
-        [Queue]_CustomRenderQueue ("Custom Render Queue", Float) = -1.0
-
-        // Lighting Mode
-        [ToggleUI] _Unlit ("Unlit (Disable Lighting)", Float) = 0.0
-
         // Surface & Alpha
         _AlphaTest ("Enable Alpha Test", Float) = 0.0
         _Cutoff ("Alpha Cutoff", Range(0, 1)) = 0.5
@@ -53,6 +40,25 @@ Shader "NinjaNext/Standard"
         _EmissionColor ("Emission Color", Color) = (0, 0, 0, 1)
         _EmissionMap ("Emission Map", 2D) = "white" {}
         _EmissionPower ("Emission Multiplier / HDR", Float) = 1.0
+
+        [Header(NinjaNext Metadata)]
+        _MaterialFlags ("Material Flags", Float) = 0.0
+        _MaterialType ("Material Type", Float) = 0.0
+        _UserDefined ("User Defined Value", Float) = 0.0
+        
+        [Header(System)]
+        // Render Pipeline State Controls
+        _Mode ("Rendering Mode", Float) = 0.0
+        [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Source Blend", Float) = 1.0
+        [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend ("Destination Blend", Float) = 0.0
+        [Enum(UnityEngine.Rendering.BlendOp)] _BlendOp ("Blend Operation", Float) = 0.0
+        [Enum(Off,0,On,1)] _ZWrite ("Depth Write", Float) = 1.0
+        [Enum(UnityEngine.Rendering.CompareFunction)] _ZTest ("Depth Test", Float) = 4.0
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 0.0
+        [Queue]_CustomRenderQueue ("Custom Render Queue", Float) = -1.0
+
+        // Lighting Mode
+        [ToggleUI] _Unlit ("Unlit (Disable Lighting)", Float) = 0.0
     }
 
     SubShader

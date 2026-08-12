@@ -111,7 +111,7 @@ namespace SilentTools
                 // Determine Material Name using ID, Type/Flags, Col, Logic, and TexMap
                 string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, namingMode);
 
-                Material mat = CreateMaterialData(matColour, matLogic, texMap, texList, i, matName, stdShader, modelFolderPath, searchDirectory, ctx);
+                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, modelFolderPath, searchDirectory, ctx);
 
                 if (location == MaterialLocation.UseExternalMaterials)
                 {
@@ -369,6 +369,7 @@ namespace SilentTools
         }
 
         private static Material CreateMaterialData(
+            NinjaMaterial nMat,
             NinjaMaterialColours matColour,
             NinjaMaterialLogic matLogic,
             NinjaTextureMap texMap,
@@ -381,6 +382,14 @@ namespace SilentTools
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             Material mat = new Material(shader) { name = matName };
+
+            // Assign Sega NN Material Metadata Properties
+            if (nMat != null)
+            {
+                mat.SetFloat("_MaterialFlags", (float)(uint)nMat.Flag);
+                mat.SetFloat("_MaterialType", (float)(uint)nMat.Type);
+                mat.SetFloat("_UserDefined", (float)nMat.UserDefined);
+            }
 
             // Default property initializations
             mat.SetFloat("_EmissionPower", 1.0f);

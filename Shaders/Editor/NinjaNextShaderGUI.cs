@@ -17,6 +17,10 @@ namespace SilentTools
             Custom
         }
 
+        private MaterialProperty materialFlagsProp;
+        private MaterialProperty materialTypeProp;
+        private MaterialProperty userDefinedProp;
+
         private MaterialProperty modeProp;
         private MaterialProperty srcBlendProp;
         private MaterialProperty dstBlendProp;
@@ -61,6 +65,10 @@ namespace SilentTools
 
         public void FindProperties(MaterialProperty[] props)
         {
+            materialFlagsProp = FindProperty("_MaterialFlags", props, false);
+            materialTypeProp = FindProperty("_MaterialType", props, false);
+            userDefinedProp = FindProperty("_UserDefined", props, false);
+
             modeProp = FindProperty("_Mode", props, false);
             srcBlendProp = FindProperty("_SrcBlend", props, false);
             dstBlendProp = FindProperty("_DstBlend", props, false);
@@ -110,52 +118,6 @@ namespace SilentTools
             Material material = materialEditor.target as Material;
 
             EditorGUI.BeginChangeCheck();
-
-            // 1. Render Mode & Pipeline State
-            if (modeProp != null)
-            {
-                EditorGUILayout.LabelField("Render & Blend Settings", EditorStyles.boldLabel);
-                EditorGUI.BeginChangeCheck();
-                RenderMode mode = (RenderMode)modeProp.floatValue;
-                mode = (RenderMode)EditorGUILayout.EnumPopup("Rendering Mode", mode);
-                if (EditorGUI.EndChangeCheck())
-                {
-                    materialEditor.RegisterPropertyChangeUndo("Rendering Mode");
-                    modeProp.floatValue = (float)mode;
-                    SetupMaterialWithRenderMode(material, mode);
-                }
-
-                EditorGUI.indentLevel++;
-                if (unlitProp != null) materialEditor.ShaderProperty(unlitProp, "Unlit (Disable Lighting)");
-                if (srcBlendProp != null) materialEditor.ShaderProperty(srcBlendProp, "Source Blend");
-                if (dstBlendProp != null) materialEditor.ShaderProperty(dstBlendProp, "Destination Blend");
-                if (blendOpProp != null) materialEditor.ShaderProperty(blendOpProp, "Blend Operation");
-                if (zWriteProp != null) materialEditor.ShaderProperty(zWriteProp, "Depth Write (_ZWrite)");
-                if (zTestProp != null) materialEditor.ShaderProperty(zTestProp, "Depth Test (_ZTest)");
-                if (cullProp != null) materialEditor.ShaderProperty(cullProp, "Cull Mode");
-
-                if (customRenderQueueProp != null)
-                {
-                    materialEditor.ShaderProperty(customRenderQueueProp, "Custom Render Queue");
-                    if (customRenderQueueProp.floatValue >= 0)
-                    {
-                        material.renderQueue = (int)customRenderQueueProp.floatValue;
-                    }
-                }
-                else
-                {
-                    EditorGUI.BeginChangeCheck();
-                    int newQueue = EditorGUILayout.IntField("Render Queue", material.renderQueue);
-                    if (EditorGUI.EndChangeCheck())
-                    {
-                        materialEditor.RegisterPropertyChangeUndo("Render Queue");
-                        material.renderQueue = newQueue;
-                    }
-                }
-
-                EditorGUI.indentLevel--;
-                EditorGUILayout.Space();
-            }
 
             // 2. Primary Surface
             EditorGUILayout.LabelField("Primary Surface", EditorStyles.boldLabel);
@@ -254,6 +216,64 @@ namespace SilentTools
                 materialEditor.TexturePropertySingleLine(new GUIContent("Emission Map"), emissionMapProp, emissionColorProp);
                 materialEditor.TextureScaleOffsetProperty(emissionMapProp);
                 if (emissionPowerProp != null) materialEditor.ShaderProperty(emissionPowerProp, "Emission Multiplier / HDR");
+            }
+
+            // 1. Render Mode & Pipeline State
+            if (modeProp != null)
+            {
+                EditorGUILayout.LabelField("Render & Blend Settings", EditorStyles.boldLabel);
+                EditorGUI.BeginChangeCheck();
+                RenderMode mode = (RenderMode)modeProp.floatValue;
+                mode = (RenderMode)EditorGUILayout.EnumPopup("Rendering Mode", mode);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    materialEditor.RegisterPropertyChangeUndo("Rendering Mode");
+                    modeProp.floatValue = (float)mode;
+                    SetupMaterialWithRenderMode(material, mode);
+                }
+
+                EditorGUI.indentLevel++;
+                if (unlitProp != null) materialEditor.ShaderProperty(unlitProp, "Unlit (Disable Lighting)");
+                if (srcBlendProp != null) materialEditor.ShaderProperty(srcBlendProp, "Source Blend");
+                if (dstBlendProp != null) materialEditor.ShaderProperty(dstBlendProp, "Destination Blend");
+                if (blendOpProp != null) materialEditor.ShaderProperty(blendOpProp, "Blend Operation");
+                if (zWriteProp != null) materialEditor.ShaderProperty(zWriteProp, "Depth Write (_ZWrite)");
+                if (zTestProp != null) materialEditor.ShaderProperty(zTestProp, "Depth Test (_ZTest)");
+                if (cullProp != null) materialEditor.ShaderProperty(cullProp, "Cull Mode");
+
+                if (customRenderQueueProp != null)
+                {
+                    materialEditor.ShaderProperty(customRenderQueueProp, "Custom Render Queue");
+                    if (customRenderQueueProp.floatValue >= 0)
+                    {
+                        material.renderQueue = (int)customRenderQueueProp.floatValue;
+                    }
+                }
+                else
+                {
+                    EditorGUI.BeginChangeCheck();
+                    int newQueue = EditorGUILayout.IntField("Render Queue", material.renderQueue);
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        materialEditor.RegisterPropertyChangeUndo("Render Queue");
+                        material.renderQueue = newQueue;
+                    }
+                }
+
+                EditorGUI.indentLevel--;
+                EditorGUILayout.Space();
+            }
+            
+            // 0. Sega NN Material Metadata
+            if (materialFlagsProp != null || materialTypeProp != null || userDefinedProp != null)
+            {
+                EditorGUILayout.LabelField("Ninja Material Metadata", EditorStyles.boldLabel);
+                EditorGUI.indentLevel++;
+                if (materialFlagsProp != null) materialEditor.ShaderProperty(materialFlagsProp, "Material Flags");
+                if (materialTypeProp != null) materialEditor.ShaderProperty(materialTypeProp, "Material Type");
+                if (userDefinedProp != null) materialEditor.ShaderProperty(userDefinedProp, "User Defined");
+                EditorGUI.indentLevel--;
+                EditorGUILayout.Space();
             }
 
             if (EditorGUI.EndChangeCheck())
