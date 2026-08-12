@@ -379,7 +379,7 @@ namespace SilentTools
             AnimationCurve curve = new AnimationCurve(kfs);
             ApplyCurveSettings(curve, subMotion.InterpolationType);
 
-            Type targetComponentType = targetProp.StartsWith("material.") ? typeof(Renderer) : typeof(Transform);
+            var targetComponentType = targetProp.StartsWith("material.") ? typeof(Renderer) : typeof(Transform);
             clip.SetCurve(targetPath, targetComponentType, targetProp, curve);
         }
 
