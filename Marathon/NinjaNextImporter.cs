@@ -19,7 +19,7 @@ namespace SilentTools
     public class NinjaNextImporter : ScriptedImporter
     {
         [Header("Import Settings")]
-        public float m_Scale = 0.05f;
+        public float m_Scale = 0.10f;
 
         [Header("Material Settings")]
         public bool m_ImportMaterials = true;
