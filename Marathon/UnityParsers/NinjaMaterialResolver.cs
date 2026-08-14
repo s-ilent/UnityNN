@@ -29,12 +29,41 @@ namespace SilentTools
     public static class NinjaMaterialResolver
     {
         private static readonly string[] TextureExtensions = new string[] {
-            ".png", ".tga", ".dds", ".psd", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"
+            ".png", ".PNG", ".tga", ".TGA", ".dds", ".DDS", ".psd", ".PSD",
+            ".jpg", ".JPG", ".jpeg", ".JPEG", ".bmp", ".BMP", ".tif", ".TIF",
+            ".tiff", ".TIFF", ".xvr", ".XVR"
         };
 
         private static readonly string[] TextureListExtensions = new string[] {
             ".xnt", ".XNT", ".gnt", ".GNT", ".znt", ".ZNT", ".cnt", ".CNT", ".ent", ".ENT", ".int", ".INT"
         };
+
+        /// <summary>
+        /// Iteratively strips known texture/support extensions (.xvr, .dds, .tga, .png, etc.) from a filename.
+        /// </summary>
+        public static string StripTextureExtensions(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return "";
+            string name = Path.GetFileName(fileName);
+            while (true)
+            {
+                string ext = Path.GetExtension(name);
+                if (string.IsNullOrEmpty(ext)) break;
+                string extLower = ext.ToLowerInvariant();
+                if (extLower == ".xvr" || extLower == ".dds" || extLower == ".tga" || extLower == ".png" ||
+                    extLower == ".jpg" || extLower == ".jpeg" || extLower == ".bmp" || extLower == ".tif" ||
+                    extLower == ".tiff" || extLower == ".psd" || extLower == ".xnt" || extLower == ".gnt" ||
+                    extLower == ".znt" || extLower == ".cnt" || extLower == ".ent" || extLower == ".int")
+                {
+                    name = Path.GetFileNameWithoutExtension(name);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            return name;
+        }
 
         /// <summary>
         /// Auto-resolves associated external texture list files (.xnt, .gnt, .znt) if the embedded texture list is missing.
@@ -111,7 +140,7 @@ namespace SilentTools
                 // Determine Material Name using ID, Type/Flags, Col, Logic, and TexMap
                 string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, namingMode);
 
-                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, modelFolderPath, searchDirectory, ctx);
+                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, searchMode, modelFolderPath, searchDirectory, ctx);
 
                 if (location == MaterialLocation.UseExternalMaterials)
                 {
@@ -325,7 +354,7 @@ namespace SilentTools
             {
                 string texName = GetBaseTextureName(texMap, texList);
                 if (!string.IsNullOrEmpty(texName))
-                    return Path.GetFileNameWithoutExtension(texName);
+                    return StripTextureExtensions(texName);
             }
 
             NinjaMaterial nMat = (objData != null && index < objData.Materials.Count) ? objData.Materials[index] : null;
@@ -377,6 +406,7 @@ namespace SilentTools
             int index,
             string matName,
             Shader shader,
+            MaterialSearch searchMode,
             string modelFolder,
             string searchDir,
             UnityEditor.AssetImporters.AssetImportContext ctx)
@@ -422,7 +452,7 @@ namespace SilentTools
                         string rawTexFileName = texList.NinjaTextureFiles[desc.Index].FileName;
                         if (string.IsNullOrEmpty(rawTexFileName)) continue;
 
-                        Texture2D tex = FindAndLoadTexture(rawTexFileName, modelFolder, searchDir, ctx);
+                        Texture2D tex = FindAndLoadTexture(rawTexFileName, searchMode, modelFolder, searchDir, ctx);
                         if (tex != null)
                         {
                             string lowerName = rawTexFileName.ToLower();
@@ -562,23 +592,64 @@ namespace SilentTools
 
         private static Texture2D FindAndLoadTexture(
             string texFileName,
+            MaterialSearch searchMode,
             string modelFolder,
             string searchDir,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
-            string cleanName = Path.GetFileNameWithoutExtension(texFileName);
+            string cleanName = StripTextureExtensions(texFileName);
+            if (string.IsNullOrEmpty(cleanName)) return null;
 
-            List<string> candidateFolders = new List<string> {
-                modelFolder,
-                $"{modelFolder}/Textures",
-                $"{modelFolder}/Materials"
-            };
+            HashSet<string> candidateFolders = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+            if (!string.IsNullOrEmpty(modelFolder))
+            {
+                string normModelFolder = modelFolder.Replace('\\', '/');
+                candidateFolders.Add(normModelFolder);
+                candidateFolders.Add($"{normModelFolder}/Textures");
+                candidateFolders.Add($"{normModelFolder}/textures");
+                candidateFolders.Add($"{normModelFolder}/Materials");
+                candidateFolders.Add($"{normModelFolder}/materials");
+
+                if (searchMode == MaterialSearch.RecursiveSubFolder || searchMode == MaterialSearch.ProjectDir)
+                {
+                    if (Directory.Exists(normModelFolder))
+                    {
+                        try
+                        {
+                            string[] subDirs = Directory.GetDirectories(normModelFolder, "*", SearchOption.AllDirectories);
+                            foreach (string subDir in subDirs)
+                            {
+                                candidateFolders.Add(subDir.Replace('\\', '/'));
+                            }
+                        }
+                        catch (System.Exception) { }
+                    }
+                }
+            }
 
             if (!string.IsNullOrEmpty(searchDir) && searchDir.StartsWith("Assets"))
             {
                 string normSearchDir = searchDir.Replace('\\', '/');
                 candidateFolders.Add(normSearchDir);
                 candidateFolders.Add($"{normSearchDir}/Textures");
+                candidateFolders.Add($"{normSearchDir}/textures");
+
+                if (searchMode == MaterialSearch.RecursiveSubFolder || searchMode == MaterialSearch.ProjectDir)
+                {
+                    if (Directory.Exists(normSearchDir))
+                    {
+                        try
+                        {
+                            string[] subDirs = Directory.GetDirectories(normSearchDir, "*", SearchOption.AllDirectories);
+                            foreach (string subDir in subDirs)
+                            {
+                                candidateFolders.Add(subDir.Replace('\\', '/'));
+                            }
+                        }
+                        catch (System.Exception) { }
+                    }
+                }
             }
 
             foreach (string folder in candidateFolders)
@@ -596,13 +667,25 @@ namespace SilentTools
                         }
                     }
                 }
+
+                string directPath = $"{folder}/{Path.GetFileName(texFileName)}";
+                if (File.Exists(directPath))
+                {
+                    Texture2D loadedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(directPath);
+                    if (loadedTex != null)
+                    {
+                        if (ctx != null) ctx.DependsOnSourceAsset(directPath);
+                        return loadedTex;
+                    }
+                }
             }
 
             string[] guids = AssetDatabase.FindAssets($"t:Texture2D {cleanName}");
             foreach (string guid in guids)
             {
                 string foundPath = AssetDatabase.GUIDToAssetPath(guid);
-                if (Path.GetFileNameWithoutExtension(foundPath).Equals(cleanName, System.StringComparison.OrdinalIgnoreCase))
+                string foundName = StripTextureExtensions(foundPath);
+                if (foundName.Equals(cleanName, System.StringComparison.OrdinalIgnoreCase))
                 {
                     Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(foundPath);
                     if (tex != null)
