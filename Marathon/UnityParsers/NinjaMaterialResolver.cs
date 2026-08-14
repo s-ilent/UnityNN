@@ -151,7 +151,6 @@ namespace SilentTools
                         Material externalMat = AssetDatabase.LoadAssetAtPath<Material>(foundPath);
                         if (externalMat != null)
                         {
-                            ctx.DependsOnSourceAsset(foundPath);
                             materials.Add(externalMat);
                             continue;
                         }
@@ -166,7 +165,6 @@ namespace SilentTools
 
                     string newMatPath = $"{targetFolder}/{matName}.mat";
                     AssetDatabase.CreateAsset(mat, newMatPath);
-                    ctx.DependsOnSourceAsset(newMatPath);
                     materials.Add(mat);
                 }
                 else
@@ -662,7 +660,6 @@ namespace SilentTools
                         Texture2D loadedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(candidatePath);
                         if (loadedTex != null)
                         {
-                            if (ctx != null) ctx.DependsOnSourceAsset(candidatePath);
                             return loadedTex;
                         }
                     }
@@ -674,7 +671,6 @@ namespace SilentTools
                     Texture2D loadedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(directPath);
                     if (loadedTex != null)
                     {
-                        if (ctx != null) ctx.DependsOnSourceAsset(directPath);
                         return loadedTex;
                     }
                 }
@@ -690,7 +686,6 @@ namespace SilentTools
                     Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(foundPath);
                     if (tex != null)
                     {
-                        if (ctx != null) ctx.DependsOnSourceAsset(foundPath);
                         return tex;
                     }
                 }
