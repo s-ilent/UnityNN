@@ -1,3 +1,4 @@
+// File: Marathon/Rel/RelResolver.cs
 using UnityEngine;
 using System.IO;
 using System.Collections.Generic;
@@ -7,37 +8,49 @@ namespace SilentTools
 {
     public static class RelResolver
     {
-        public static uint ResolveOffset(int ptr, uint fileSize, uint baseAddr = 0)
+        public static bool TryResolveOffset(int ptr, uint fileSize, uint baseAddr, out uint resolvedOffset)
         {
-            if (ptr <= 0) return 0;
-        
-            if (baseAddr != 0 && (uint)ptr >= baseAddr)
+            resolvedOffset = 0;
+            if (ptr <= 0) return false;
+            uint uPtr = (uint)ptr;
+
+            if (baseAddr != 0 && uPtr >= baseAddr)
             {
-                uint resolved = (uint)(ptr - baseAddr);
+                uint resolved = uPtr - baseAddr;
                 if (resolved < fileSize)
                 {
-                    return resolved;
+                    resolvedOffset = resolved;
+                    return true;
                 }
             }
-        
-            if ((uint)ptr < fileSize)
+
+            if (uPtr < fileSize)
             {
-                return (uint)ptr;
+                resolvedOffset = uPtr;
+                return true;
             }
-        
-            throw new System.IndexOutOfRangeException(
-                $"Raw Pointer: 0x{ptr:X8} (Dec: {ptr}), " +
-                $"Active Base Address: 0x{baseAddr:X8}, Resolved Offset: 0x{(ptr - (int)baseAddr):X8} is out of bounds " +
-                $"for payload size of {fileSize} bytes. "
-            );
+
+            return false;
+        }
+
+        public static uint ResolveOffset(int ptr, uint fileSize, uint baseAddr = 0)
+        {
+            if (TryResolveOffset(ptr, fileSize, baseAddr, out uint resolved))
+            {
+                return resolved;
+            }
+            return 0;
         }
 
         public static RelFileType IdentifyRelType(string filename, byte[] rawData)
         {
-            string lowerName = filename.ToLower();
+            string lowerName = string.IsNullOrEmpty(filename) ? "" : filename.ToLowerInvariant();
+
+            if (lowerName.Contains("collision") || lowerName.Contains("colli") || lowerName.EndsWith("col.rel") || lowerName.EndsWith("col.xnr"))
+                return RelFileType.Collision;
             if (lowerName.Contains("set") || lowerName.Contains("layout"))
                 return RelFileType.SetLayout;
-            if (lowerName.Contains("effect"))
+            if (lowerName.Contains("effect") || lowerName.Contains("env"))
                 return RelFileType.LndEffect;
             if (lowerName.Contains("enemylight") || lowerName.Contains("enemy_light"))
                 return RelFileType.LndEnemyLight;
@@ -47,27 +60,143 @@ namespace SilentTools
                 return RelFileType.LndCommon;
             if (lowerName.Contains("block") || lowerName.Contains("route"))
                 return RelFileType.StageRouteBlock;
-            if (lowerName.Contains("filelist"))
+            if (lowerName.Contains("filelist") || lowerName.Contains("questlist"))
                 return RelFileType.QuestList;
-            if (lowerName.Contains("collision") || lowerName.Contains("colli"))
-                return RelFileType.Collision;
 
-            // Exclude non-layout parameter files from the layout importer
+            // Exclude non-layout parameter files
             if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
                 return RelFileType.Unknown;
 
-            if ((lowerName.StartsWith("enemy") || lowerName.Contains("param") || lowerName.Contains("data") || lowerName.Contains("drop") || lowerName.Contains("atk")) && (lowerName.EndsWith(".rel") || lowerName.EndsWith(".xnr")))
+            if ((lowerName.StartsWith("enemy") || lowerName.Contains("param") || lowerName.Contains("data") || lowerName.Contains("drop") || lowerName.Contains("atk") || lowerName.Contains("spawn")) &&
+                (lowerName.EndsWith(".rel") || lowerName.EndsWith(".xnr") || lowerName.EndsWith(".gnr") || lowerName.EndsWith(".znr")))
                 return RelFileType.EnemyLayout;
+
+            // If filename matching returned Unknown, inspect raw binary payload
+            return DetectRelTypeFromData(rawData);
+        }
+
+        public static RelFileType DetectRelTypeFromData(byte[] rawData)
+        {
+            if (rawData == null || rawData.Length < 16) return RelFileType.Unknown;
+
+            // Check for primitive collision signatures ("qua\0" or "tri\0")
+            for (int i = 0; i < rawData.Length - 4; i++)
+            {
+                if ((rawData[i] == 0x71 && rawData[i + 1] == 0x75 && rawData[i + 2] == 0x61 && rawData[i + 3] == 0x00) ||
+                    (rawData[i] == 0x74 && rawData[i + 1] == 0x72 && rawData[i + 2] == 0x69 && rawData[i + 3] == 0x00))
+                {
+                    return RelFileType.Collision;
+                }
+            }
+
+            byte[] payload = ExtractPayload(rawData);
+            if (payload == null || payload.Length < 16) return RelFileType.Unknown;
+
+            using (MemoryStream stream = new MemoryStream(payload))
+            {
+                BinaryReaderEx reader = new BinaryReaderEx(stream);
+                uint fileSize = (uint)payload.Length;
+
+                reader.JumpTo(4);
+                uint rawFileSizeField = reader.ReadUInt32();
+                uint headerLoc = reader.ReadUInt32();
+
+                if ((rawFileSizeField & 0xFF000000) != 0 || headerLoc > payload.Length)
+                {
+                    reader.IsBigEndian = true;
+                    reader.JumpTo(8);
+                    headerLoc = reader.ReadUInt32();
+                }
+
+                uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
+
+                if (headerLoc + 8 <= fileSize)
+                {
+                    reader.JumpTo(headerLoc);
+
+                    // 1. Test SetLayout
+                    short areaID = reader.ReadInt16();
+                    short mapCount = reader.ReadInt16();
+                    int mainListPtr = reader.ReadInt32();
+
+                    if (mapCount > 0 && mapCount < 100 && TryResolveOffset(mainListPtr, fileSize, baseAddr, out uint resMainListPtr))
+                    {
+                        if (resMainListPtr + 8 <= fileSize)
+                        {
+                            reader.JumpTo(resMainListPtr);
+                            reader.ReadInt16(); // mapNumber
+                            short listCount = reader.ReadInt16();
+                            int listPtr = reader.ReadInt32();
+                            if (listCount >= 0 && listCount < 200 && TryResolveOffset(listPtr, fileSize, baseAddr, out _))
+                            {
+                                return RelFileType.SetLayout;
+                            }
+                        }
+                    }
+
+                    // 2. Test EnemyLayout
+                    reader.JumpTo(headerLoc);
+                    int eListPtr = reader.ReadInt32();
+                    int eListCount = reader.ReadInt32();
+
+                    if (eListCount > 0 && eListCount < 500 && TryResolveOffset(eListPtr, fileSize, baseAddr, out uint resEListPtr))
+                    {
+                        if (resEListPtr + 24 <= fileSize)
+                        {
+                            return RelFileType.EnemyLayout;
+                        }
+                    }
+
+                    // 3. Test LndEffect vs LndEnemyLight
+                    reader.JumpTo(headerLoc);
+                    int p1 = reader.ReadInt32();
+                    int p2 = reader.ReadInt32();
+                    int p3 = reader.ReadInt32();
+                    int p4 = reader.ReadInt32();
+
+                    if (TryResolveOffset(p1, fileSize, baseAddr, out _) &&
+                        TryResolveOffset(p2, fileSize, baseAddr, out _) &&
+                        TryResolveOffset(p3, fileSize, baseAddr, out _))
+                    {
+                        if (p4 != 0 && TryResolveOffset(p4, fileSize, baseAddr, out _))
+                            return RelFileType.LndEffect;
+                        else
+                            return RelFileType.LndEnemyLight;
+                    }
+
+                    // 4. Test FogBank
+                    if (headerLoc >= 0x2C && (headerLoc - 0x10) % 28 == 0)
+                    {
+                        return RelFileType.FogBank;
+                    }
+
+                    // 5. Test QuestList
+                    reader.JumpTo(headerLoc);
+                    int qListPtr = reader.ReadInt32();
+                    int qCount = reader.ReadInt32();
+                    if (qCount > 0 && qCount < 1000 && TryResolveOffset(qListPtr, fileSize, baseAddr, out uint resQListPtr))
+                    {
+                        if (resQListPtr + 8 <= fileSize)
+                        {
+                            reader.JumpTo(resQListPtr);
+                            reader.ReadInt32(); // QuestNumber
+                            int strPtr = reader.ReadInt32();
+                            if (TryResolveOffset(strPtr, fileSize, baseAddr, out _))
+                            {
+                                return RelFileType.QuestList;
+                            }
+                        }
+                    }
+                }
+            }
 
             return RelFileType.Unknown;
         }
 
-        public static object ParseRelBytes(byte[] rawData, string filename, out RelFileType relType)
+        private static byte[] ExtractPayload(byte[] rawData)
         {
-            relType = IdentifyRelType(filename, rawData);
-            
-            // 1. Extract raw NXR chunk payload if wrapped in an NXIF container
-            byte[] payload = rawData;
+            if (rawData == null || rawData.Length < 16) return rawData;
+
             using (MemoryStream stream = new MemoryStream(rawData))
             {
                 BinaryReaderEx reader = new BinaryReaderEx(stream);
@@ -94,22 +223,66 @@ namespace SilentTools
                     uint dataOffset = reader.ReadUInt32();
                     long chunkStart = containerStart + dataOffset;
 
-                    reader.JumpTo(chunkStart + 4);
-                    uint chunkSize = reader.ReadUInt32();
-                    
-                    // The total size is chunkSize + 8 bytes (chunkID + chunkSize fields)
-                    uint totalChunkSize = chunkSize + 8; 
-
-                    if (chunkStart + totalChunkSize <= stream.Length)
+                    if (chunkStart + 8 <= stream.Length)
                     {
-                        payload = new byte[totalChunkSize];
-                        stream.Position = chunkStart;
-                        stream.Read(payload, 0, (int)totalChunkSize);
+                        reader.JumpTo(chunkStart + 4);
+                        uint chunkSize = reader.ReadUInt32();
+                        uint totalChunkSize = chunkSize + 8;
+
+                        if (chunkStart + totalChunkSize <= stream.Length)
+                        {
+                            byte[] payload = new byte[totalChunkSize];
+                            stream.Position = chunkStart;
+                            stream.Read(payload, 0, (int)totalChunkSize);
+                            return payload;
+                        }
                     }
                 }
             }
 
-            // 2. Parse unwrapped binary payload
+            return rawData;
+        }
+
+        private static uint ComputeBaseAddress(BinaryReaderEx reader, uint headerLoc, uint fileSize)
+        {
+            uint baseAddr = 0;
+            if (headerLoc > fileSize)
+            {
+                baseAddr = headerLoc - 0x10;
+            }
+            else if (headerLoc + 8 <= fileSize)
+            {
+                reader.JumpTo(headerLoc);
+                int ptrVal1 = reader.ReadInt32();
+                int ptrVal2 = reader.ReadInt32();
+
+                if (ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
+                {
+                    uint candidateBase = (uint)ptrVal1 - 0x10;
+                    if (candidateBase % 16 == 0 && (uint)ptrVal1 >= candidateBase && ((uint)ptrVal1 - candidateBase) < fileSize)
+                    {
+                        baseAddr = candidateBase;
+                    }
+                }
+                else if (ptrVal2 > (int)fileSize && ptrVal2 < 0x0FFFFFFF)
+                {
+                    uint candidateBase = (uint)ptrVal2 - 0x10;
+                    if (candidateBase % 16 == 0 && (uint)ptrVal2 >= candidateBase && ((uint)ptrVal2 - candidateBase) < fileSize)
+                    {
+                        baseAddr = candidateBase;
+                    }
+                }
+            }
+            reader.Offset = baseAddr;
+            return baseAddr;
+        }
+
+        public static object ParseRelBytes(byte[] rawData, string filename, out RelFileType relType)
+        {
+            relType = IdentifyRelType(filename, rawData);
+
+            byte[] payload = ExtractPayload(rawData);
+
             using (MemoryStream stream = new MemoryStream(payload))
             {
                 BinaryReaderEx reader = new BinaryReaderEx(stream);
@@ -125,44 +298,95 @@ namespace SilentTools
                     headerLoc = reader.ReadUInt32();
                 }
 
-                uint baseAddr = 0;
-                if (headerLoc > stream.Length)
+                uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
+
+                if (headerLoc > fileSize)
                 {
-                    baseAddr = headerLoc - 0x10;
                     headerLoc = 0x10;
-                    reader.Offset = baseAddr;
                 }
 
                 reader.JumpTo(headerLoc);
 
-                switch (relType)
+                List<RelFileType> typesToTry = new List<RelFileType>();
+                if (relType != RelFileType.Unknown)
                 {
-                    case RelFileType.SetLayout:
-                        return SetFileParser.Parse(reader, fileSize);
-                    case RelFileType.LndEffect:
-                        return LndEffectParser.Parse(reader, fileSize);
-                    case RelFileType.LndEnemyLight:
-                        return LndEnemyLightParser.Parse(reader, fileSize);
-                    case RelFileType.FogBank:
-                        return FogBankParser.Parse(reader, baseAddr, headerLoc);
-                    case RelFileType.LndCommon:
-                        return LndCommonParser.Parse(reader, baseAddr);
-                    case RelFileType.StageRouteBlock:
-                        return StageBlockRouteParser.Parse(reader, fileSize, headerLoc);
-                    case RelFileType.EnemyLayout:
-                        return EnemyLayoutParser.Parse(reader, baseAddr);
-                    case RelFileType.QuestList:
-                        return QuestListParser.Parse(reader, baseAddr);
-                    case RelFileType.Collision:
-                        return CollisionParser.Parse(reader, fileSize, headerLoc);
-                    default:
-                        return null;
+                    typesToTry.Add(relType);
                 }
+
+                foreach (RelFileType t in System.Enum.GetValues(typeof(RelFileType)))
+                {
+                    if (t != RelFileType.Unknown && !typesToTry.Contains(t))
+                    {
+                        typesToTry.Add(t);
+                    }
+                }
+
+                foreach (RelFileType candidateType in typesToTry)
+                {
+                    try
+                    {
+                        reader.JumpTo(headerLoc);
+                        object parsed = ExecuteParser(candidateType, reader, fileSize, baseAddr, headerLoc);
+                        if (parsed != null && IsNonEmptyRelData(parsed))
+                        {
+                            relType = candidateType;
+                            return parsed;
+                        }
+                    }
+                    catch (System.Exception)
+                    {
+                        // Try next candidate parser
+                    }
+                }
+
+                throw new System.IO.InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized or corrupted format structure.");
             }
         }
 
+        private static object ExecuteParser(RelFileType type, BinaryReaderEx reader, uint fileSize, uint baseAddr, uint headerLoc)
+        {
+            switch (type)
+            {
+                case RelFileType.SetLayout:
+                    return SetFileParser.Parse(reader, fileSize);
+                case RelFileType.LndEffect:
+                    return LndEffectParser.Parse(reader, fileSize);
+                case RelFileType.LndEnemyLight:
+                    return LndEnemyLightParser.Parse(reader, fileSize);
+                case RelFileType.FogBank:
+                    return FogBankParser.Parse(reader, baseAddr, headerLoc);
+                case RelFileType.LndCommon:
+                    return LndCommonParser.Parse(reader, baseAddr);
+                case RelFileType.StageRouteBlock:
+                    return StageBlockRouteParser.Parse(reader, fileSize, headerLoc);
+                case RelFileType.EnemyLayout:
+                    return EnemyLayoutParser.Parse(reader, baseAddr);
+                case RelFileType.QuestList:
+                    return QuestListParser.Parse(reader, baseAddr);
+                case RelFileType.Collision:
+                    return CollisionParser.Parse(reader, fileSize, headerLoc);
+                default:
+                    return null;
+            }
+        }
+
+        public static bool IsNonEmptyRelData(object parsedData)
+        {
+            if (parsedData == null) return false;
+            if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
+            if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0;
+            if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
+            if (parsedData is LndEffectData effectData) return effectData != null;
+            if (parsedData is List<LndFogData> fogs) return fogs != null && fogs.Count > 0;
+            if (parsedData is LndCommonData commonData) return commonData != null;
+            if (parsedData is LndEnemyLightData enemyLight) return enemyLight != null;
+            if (parsedData is List<QuestListingData> questList) return questList != null && questList.Count > 0;
+            if (parsedData is StageBlockRouteData routeData) return routeData != null && routeData.Offsets.Count > 0;
+            return true;
+        }
+
         #region Unity Scene Builder
-        public static GameObject ResolveRelAsset(object parsedData, RelFileType relType, string assetName, float scale = 0.05f)
+        public static GameObject ResolveRelAsset(object parsedData, RelFileType relType, string assetName, float scale = 0.05f, UnityEditor.AssetImporters.AssetImportContext ctx = null)
         {
             GameObject rootGO = new GameObject(assetName);
 
@@ -195,6 +419,10 @@ namespace SilentTools
                         Mesh mesh = CollisionParser.CreateUnityMesh(colData, scale, $"{assetName}_CollisionMesh");
                         if (mesh != null)
                         {
+                            if (ctx != null)
+                            {
+                                ctx.AddObjectToAsset("CollisionMesh", mesh);
+                            }
                             MeshFilter mf = rootGO.AddComponent<MeshFilter>();
                             mf.sharedMesh = mesh;
                             MeshCollider mc = rootGO.AddComponent<MeshCollider>();

@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.IO;
+using System.Collections.Generic;
 
 namespace SilentTools.Editor
 {
@@ -81,6 +82,12 @@ namespace SilentTools.Editor
                     DrawMetricRow("Area ID", $"{setFile.AreaID}");
                     DrawMetricRow("Stage Maps", $"{setFile.MapData.Count}");
                 }
+                else if (m_Context.RelData is CollisionMeshData colData)
+                {
+                    DrawMetricRow("REL Type", "Collision Geometry");
+                    DrawMetricRow("Vertices", $"{colData.Vertices.Count}");
+                    DrawMetricRow("Polygons", $"{colData.Polygons.Count}");
+                }
                 else if (m_Context.RelData is LndEffectData effect)
                 {
                     DrawMetricRow("REL Type", "Lighting & Fog");
@@ -91,6 +98,26 @@ namespace SilentTools.Editor
                 {
                     DrawMetricRow("REL Type", "Enemy Spawns");
                     DrawMetricRow("Spawn Waves", $"{enemyData.Spawns.Count}");
+                }
+                else if (m_Context.RelData is StageBlockRouteData routeData)
+                {
+                    DrawMetricRow("REL Type", "Stage Route/Block");
+                    DrawMetricRow("Route Entries", $"{routeData.Offsets.Count}");
+                }
+                else if (m_Context.RelData is List<LndFogData> fogs)
+                {
+                    DrawMetricRow("REL Type", "Fog Bank");
+                    DrawMetricRow("Fog Presets", $"{fogs.Count}");
+                }
+                else if (m_Context.RelData is LndCommonData common)
+                {
+                    DrawMetricRow("REL Type", "Map Scene Link");
+                    DrawMetricRow("NBL Fragment", $"{common.NblFilenameFragment}");
+                }
+                else if (m_Context.RelData is List<QuestListingData> qList)
+                {
+                    DrawMetricRow("REL Type", "Quest List");
+                    DrawMetricRow("Quests", $"{qList.Count}");
                 }
             }
 

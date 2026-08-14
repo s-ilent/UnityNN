@@ -239,7 +239,7 @@ namespace SilentTools.Editor
                     Debug.LogWarning($"Could not load Ninja asset {path}:\n{ex}");
                 }
             }
-            else if (ext == ".rel" || ext == ".xnr")
+            else if (ext == ".rel" || ext == ".xnr" || ext == ".gnr" || ext == ".znr")
             {
                 try
                 {
@@ -249,10 +249,17 @@ namespace SilentTools.Editor
                     m_Context.RelData = parsedRel;
                     m_Context.RelType = rType;
 
-                    m_Context.RelSource.IsPresent = true;
-                    m_Context.RelSource.IsLocal = true;
-                    m_Context.RelSource.SourceDescription = $"Local ({ext})";
-                    m_Context.RelSource.Details = $"Type: {rType}";
+                    if (parsedRel != null)
+                    {
+                        m_Context.RelSource.IsPresent = true;
+                        m_Context.RelSource.IsLocal = true;
+                        m_Context.RelSource.SourceDescription = $"Local ({ext})";
+                        m_Context.RelSource.Details = $"Type: {rType}";
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"Could not parse REL/XNR asset {path}: Empty or unrecognized layout structure.");
+                    }
                 }
                 catch (System.Exception ex)
                 {
