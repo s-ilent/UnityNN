@@ -88,6 +88,14 @@ namespace SilentTools.Editor
                     DrawMetricRow("Vertices", $"{colData.Vertices.Count}");
                     DrawMetricRow("Polygons", $"{colData.Polygons.Count}");
                 }
+                else if (m_Context.RelData is FileListData fileListData)
+                {
+                    int totalFiles = 0;
+                    foreach (var c in fileListData.Categories) totalFiles += c.FileNames.Count;
+                    DrawMetricRow("REL Type", "File List");
+                    DrawMetricRow("Categories", $"{fileListData.Categories.Count}");
+                    DrawMetricRow("Total Listed Files", $"{totalFiles}");
+                }
                 else if (m_Context.RelData is LndEffectData effect)
                 {
                     DrawMetricRow("REL Type", "Lighting & Fog");

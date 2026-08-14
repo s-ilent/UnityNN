@@ -20,7 +20,7 @@ namespace SilentTools.Editor
         private void DrawSingleMotionSection(string title, NinjaMotion mot, Dictionary<int, bool> foldouts, Dictionary<int, int> pages)
         {
             EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
-            EditorGUILayout.LabelField($"Frame Range: {mot.StartFrame:F2} - {mot.EndFrame:F2} | Framerate: {mot.Framerate:F2} FPS");
+            EditorGUILayout.LabelField($"Frame Range: {mot.StartFrame:F2} - {mot.EndFrame:F2} | Framerate: {mot.Framerate:F2} FPS | Category: {CleanEnumString(mot.Type)}");
 
             if (mot.SubMotions != null)
             {
@@ -32,13 +32,18 @@ namespace SilentTools.Editor
                     if (!foldouts.ContainsKey(i)) foldouts[i] = false;
                     if (!pages.ContainsKey(i)) pages[i] = 0;
 
+                    string formattedType = NinjaSubMotionTypeFormatter.FormatSubMotionType(sm.Type, mot.Type);
+
                     EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                    foldouts[i] = EditorGUILayout.Foldout(foldouts[i], $"SubMotion [{i}] Target Node [{sm.NodeIndex}] - Keyframes: {sm.Keyframes?.Count ?? 0}", true);
+                    foldouts[i] = EditorGUILayout.Foldout(foldouts[i], $"SubMotion [{i}] Node [{sm.NodeIndex}] - {formattedType} (Keyframes: {sm.Keyframes?.Count ?? 0})", true);
 
                     if (foldouts[i] && sm.Keyframes != null)
                     {
                         EditorGUI.indentLevel++;
-                        DrawCleanFlagsLabel(sm.Type, "SubMotion Track Flags:");
+                        EditorGUILayout.LabelField("Track Type Flags:", formattedType);
+                        EditorGUILayout.LabelField("Raw Type Hex:", $"0x{(uint)sm.Type:X8}");
+                        EditorGUILayout.LabelField("Interpolation Mode:", CleanEnumString(sm.InterpolationType));
+                        EditorGUILayout.LabelField("Frame Range:", $"{sm.StartFrame:F2} - {sm.EndFrame:F2} | Keyframes Range: {sm.StartKeyframe:F2} - {sm.EndKeyframe:F2}");
 
                         int currentPage = pages[i];
                         DrawPaginationControls(ref currentPage, sm.Keyframes.Count, ITEMS_PER_PAGE);
@@ -50,8 +55,11 @@ namespace SilentTools.Editor
                         for (int kIdx = startIdx; kIdx < endIdx; kIdx++)
                         {
                             var kf = sm.Keyframes[kIdx];
-                            if (kf is NinjaKeyframe.NNS_MOTION_KEY_VECTOR v) EditorGUILayout.LabelField($"Frame {v.Frame:F2}: Vector ({v.Value.x}, {v.Value.y}, {v.Value.z})");
-                            else if (kf is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16 r) EditorGUILayout.LabelField($"Frame {r.Frame}: BAMS ({r.Value1}, {r.Value2}, {r.Value3})");
+                            if (kf is NinjaKeyframe.NNS_MOTION_KEY_VECTOR v) EditorGUILayout.LabelField($"Frame {v.Frame:F2}: Vector ({v.Value.x:F4}, {v.Value.y:F4}, {v.Value.z:F4})");
+                            else if (kf is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16 r) EditorGUILayout.LabelField($"Frame {r.Frame}: BAMS ({r.Value1}, {r.Value2}, {r.Value3}) -> Deg ({BamsToDegrees(r.Value1):F2}°, {BamsToDegrees(r.Value2):F2}°, {BamsToDegrees(r.Value3):F2}°)");
+                            else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f) EditorGUILayout.LabelField($"Frame {f.Frame:F2}: Float ({f.Value:F4})");
+                            else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32) EditorGUILayout.LabelField($"Frame {s32.Frame:F2}: Sint32 ({s32.Value}) -> Deg ({Bams32ToDegrees(s32.Value):F2}°)");
+                            else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16) EditorGUILayout.LabelField($"Frame {s16.Frame}: Sint16 ({s16.Value}) -> Deg ({BamsToDegrees(s16.Value):F2}°)");
                         }
                         EditorGUI.indentLevel--;
                     }
@@ -59,6 +67,9 @@ namespace SilentTools.Editor
                 }
             }
         }
+
+        private static float BamsToDegrees(int bamAngle) => (float)((double)bamAngle * (180.0 / 32768.0));
+        private static float Bams32ToDegrees(int bam32Angle) => (float)((double)bam32Angle * (360.0 / 65536.0));
         #endregion
     }
 }

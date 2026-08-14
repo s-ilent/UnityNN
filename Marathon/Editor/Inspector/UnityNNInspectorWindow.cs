@@ -44,8 +44,9 @@ namespace SilentTools.Editor
         private Vector2 m_RightPaneScrollPosition;
         private int m_SelectedTab = 0;
 
-        // Default: Local Data Only (linked files disabled by default)
+        // Default settings
         private bool m_IncludeLinkedFiles = false;
+        private bool m_UseGenericReflectionView = false;
 
         private readonly string[] m_NinjaTabNames = new string[] {
             "Node Tree",
@@ -256,10 +257,6 @@ namespace SilentTools.Editor
                         m_Context.RelSource.SourceDescription = $"Local ({ext})";
                         m_Context.RelSource.Details = $"Type: {rType}";
                     }
-                    else
-                    {
-                        Debug.LogWarning($"Could not parse REL/XNR asset {path}: Empty or unrecognized layout structure.");
-                    }
                 }
                 catch (System.Exception ex)
                 {
@@ -284,6 +281,8 @@ namespace SilentTools.Editor
             {
                 LoadSelectedAsset();
             }
+
+            m_UseGenericReflectionView = GUILayout.Toggle(m_UseGenericReflectionView, m_UseGenericReflectionView ? "Mode: Debug" : "Mode: Normal", EditorStyles.toolbarButton, GUILayout.Width(160));
 
             GUILayout.FlexibleSpace();
 
@@ -357,7 +356,7 @@ namespace SilentTools.Editor
             EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
 
-            // 2. Right Persistent Metrics Pane (Width 280px) - Disables horizontal scrollbars
+            // 2. Right Persistent Metrics Pane (Width 280px)
             EditorGUILayout.BeginVertical(EditorStyles.helpBox, GUILayout.Width(280));
             m_RightPaneScrollPosition = EditorGUILayout.BeginScrollView(m_RightPaneScrollPosition, false, false);
             DrawPersistentOverviewTableRightPane();
@@ -386,8 +385,8 @@ namespace SilentTools.Editor
             if (m_Context.IsRelAsset)
             {
                 bool[] flags = new bool[m_RelTabNames.Length];
-                flags[0] = m_Context.RelData is SetFileData || m_Context.RelData is CollisionMeshData;
-                flags[1] = m_Context.RelData is LndEffectData || m_Context.RelData is List<LndFogData> || m_Context.RelData is LndCommonData;
+                flags[0] = m_Context.RelData is SetFileData || m_Context.RelData is CollisionMeshData || m_Context.RelData is FileListData;
+                flags[1] = m_Context.RelData is LndEffectData || m_Context.RelData is List<LndFogData> || m_Context.RelData is LndCommonData || m_Context.RelData is LndEnemyLightData;
                 flags[2] = m_Context.RelData is EnemyLayoutData;
                 flags[3] = m_Context.RelData is List<QuestListingData>;
                 return flags;

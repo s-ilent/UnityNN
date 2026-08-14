@@ -14,7 +14,26 @@ namespace SilentTools.Editor
             object parsedData = m_Context.RelData;
             RelFileType relType = m_Context.RelType;
 
-            if (parsedData is SetFileData setFile)
+            if (parsedData is FileListData fileListData)
+            {
+                int totalFiles = 0;
+                foreach (var c in fileListData.Categories) totalFiles += c.FileNames.Count;
+                EditorGUILayout.LabelField($"File List ({fileListData.Categories.Count} Categories, {totalFiles} Files)", EditorStyles.boldLabel);
+
+                foreach (var cat in fileListData.Categories)
+                {
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                    EditorGUILayout.LabelField($"Category [{cat.CategoryIndex:02d}] ({cat.FileNames.Count} Files)", EditorStyles.boldLabel);
+                    EditorGUI.indentLevel++;
+                    for (int i = 0; i < cat.FileNames.Count; i++)
+                    {
+                        EditorGUILayout.LabelField($"  [{i:000}] {cat.FileNames[i]}");
+                    }
+                    EditorGUI.indentLevel--;
+                    EditorGUILayout.EndVertical();
+                }
+            }
+            else if (parsedData is SetFileData setFile)
             {
                 EditorGUILayout.LabelField($"Stage Objects Layout (Area ID: {setFile.AreaID}, Maps: {setFile.MapData.Count})", EditorStyles.boldLabel);
                 foreach (var map in setFile.MapData)
@@ -95,6 +114,14 @@ namespace SilentTools.Editor
                 foreach (var q in questList)
                 {
                     EditorGUILayout.LabelField($"  Quest [{q.QuestNumber:000}]: {q.FileName}");
+                }
+            }
+            else if (parsedData is StageBlockRouteData routeData)
+            {
+                EditorGUILayout.LabelField($"Stage Route & Block Data ({routeData.Offsets.Count} Entries)", EditorStyles.boldLabel);
+                for (int i = 0; i < Mathf.Min(routeData.Offsets.Count, 20); i++)
+                {
+                    EditorGUILayout.LabelField($"  Route [{i}]: Offset 0x{routeData.Offsets[i]:X8}");
                 }
             }
         }
