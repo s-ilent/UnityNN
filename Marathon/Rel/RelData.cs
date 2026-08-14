@@ -13,8 +13,20 @@ namespace SilentTools
         LndCommon,        // LndCommon.rel
         StageRouteBlock,  // LndBlock.rel / LndRoute.rel
         EnemyLayout,      // enemy*.rel / enemy*.xnr
-        QuestList,        // filelist.rel
-        Collision         // collision.xnr / collision.rel
+        QuestList,        // filelist.rel (Quest list)
+        Collision,        // collision.xnr / collision.rel
+        FileList          // *filelist.rel (16-category filename list)
+    }
+
+    public class FileListCategoryData
+    {
+        public int CategoryIndex { get; set; }
+        public List<string> FileNames { get; set; } = new List<string>();
+    }
+
+    public class FileListData
+    {
+        public List<FileListCategoryData> Categories { get; set; } = new List<FileListCategoryData>();
     }
 
     public class CollisionPolygon

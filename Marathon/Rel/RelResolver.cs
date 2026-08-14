@@ -46,6 +46,10 @@ namespace SilentTools
         {
             string lowerName = string.IsNullOrEmpty(filename) ? "" : filename.ToLowerInvariant();
 
+            if (lowerName.Equals("filelist.rel") || lowerName.Equals("filelist.xnr"))
+                return RelFileType.QuestList;
+            if (lowerName.Contains("filelist"))
+                return RelFileType.FileList;
             if (lowerName.Contains("collision") || lowerName.Contains("colli") || lowerName.EndsWith("col.rel") || lowerName.EndsWith("col.xnr"))
                 return RelFileType.Collision;
             if (lowerName.Contains("set") || lowerName.Contains("layout"))
@@ -60,7 +64,7 @@ namespace SilentTools
                 return RelFileType.LndCommon;
             if (lowerName.Contains("block") || lowerName.Contains("route"))
                 return RelFileType.StageRouteBlock;
-            if (lowerName.Contains("filelist") || lowerName.Contains("questlist"))
+            if (lowerName.Contains("questlist"))
                 return RelFileType.QuestList;
 
             // Exclude non-layout parameter files
@@ -114,7 +118,36 @@ namespace SilentTools
                 {
                     reader.JumpTo(headerLoc);
 
-                    // 1. Test SetLayout
+                    // 1. Test 16-Category FileList (*filelist.rel)
+                    int activeCatCount = 0;
+                    for (int i = 0; i < 16; i++)
+                    {
+                        if (headerLoc + (i + 1) * 4 > fileSize) break;
+                        int catPtr = reader.ReadInt32();
+                        if (catPtr > 0 && TryResolveOffset(catPtr, fileSize, baseAddr, out uint resCatPtr))
+                        {
+                            if (resCatPtr + 8 <= fileSize)
+                            {
+                                long prevPos = reader.BaseStream.Position;
+                                reader.JumpTo(resCatPtr);
+                                int cSize = reader.ReadInt32();
+                                int cAddr = reader.ReadInt32();
+                                reader.JumpTo(prevPos);
+
+                                if (cSize > 0 && cSize < 5000 && TryResolveOffset(cAddr, fileSize, baseAddr, out _))
+                                {
+                                    activeCatCount++;
+                                }
+                            }
+                        }
+                    }
+                    if (activeCatCount >= 1)
+                    {
+                        return RelFileType.FileList;
+                    }
+
+                    // 2. Test SetLayout
+                    reader.JumpTo(headerLoc);
                     short areaID = reader.ReadInt16();
                     short mapCount = reader.ReadInt16();
                     int mainListPtr = reader.ReadInt32();
@@ -134,7 +167,7 @@ namespace SilentTools
                         }
                     }
 
-                    // 2. Test EnemyLayout
+                    // 3. Test EnemyLayout
                     reader.JumpTo(headerLoc);
                     int eListPtr = reader.ReadInt32();
                     int eListCount = reader.ReadInt32();
@@ -147,7 +180,7 @@ namespace SilentTools
                         }
                     }
 
-                    // 3. Test LndEffect vs LndEnemyLight
+                    // 4. Test LndEffect vs LndEnemyLight
                     reader.JumpTo(headerLoc);
                     int p1 = reader.ReadInt32();
                     int p2 = reader.ReadInt32();
@@ -164,13 +197,13 @@ namespace SilentTools
                             return RelFileType.LndEnemyLight;
                     }
 
-                    // 4. Test FogBank
+                    // 5. Test FogBank
                     if (headerLoc >= 0x2C && (headerLoc - 0x10) % 28 == 0)
                     {
                         return RelFileType.FogBank;
                     }
 
-                    // 5. Test QuestList
+                    // 6. Test QuestList
                     reader.JumpTo(headerLoc);
                     int qListPtr = reader.ReadInt32();
                     int qCount = reader.ReadInt32();
@@ -365,6 +398,8 @@ namespace SilentTools
                     return QuestListParser.Parse(reader, baseAddr);
                 case RelFileType.Collision:
                     return CollisionParser.Parse(reader, fileSize, headerLoc);
+                case RelFileType.FileList:
+                    return FileListParser.Parse(reader, baseAddr, headerLoc);
                 default:
                     return null;
             }
@@ -376,6 +411,7 @@ namespace SilentTools
             if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
             if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0;
             if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
+            if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
             if (parsedData is LndEffectData effectData) return effectData != null;
             if (parsedData is List<LndFogData> fogs) return fogs != null && fogs.Count > 0;
             if (parsedData is LndCommonData commonData) return commonData != null;
@@ -413,10 +449,13 @@ namespace SilentTools
                 case RelFileType.QuestList:
                     if (parsedData is List<QuestListingData> qList) BuildQuestListHierarchy(qList, rootGO);
                     break;
+                case RelFileType.FileList:
+                    if (parsedData is FileListData fList) BuildFileListHierarchy(fList, rootGO);
+                    break;
                 case RelFileType.Collision:
                     if (parsedData is CollisionMeshData colData)
                     {
-                        Mesh mesh = CollisionParser.CreateUnityMesh(colData, scale, $"{assetName}_CollisionMesh");
+                        Mesh mesh = CollisionParser.CreateUnityMeshAndColliders(colData, scale, $"{assetName}_CollisionMesh", rootGO);
                         if (mesh != null)
                         {
                             if (ctx != null)
@@ -555,6 +594,22 @@ namespace SilentTools
             {
                 GameObject qGO = new GameObject($"Quest_{q.QuestNumber:000}_{q.FileName}");
                 qGO.transform.SetParent(rootGO.transform, false);
+            }
+        }
+
+        private static void BuildFileListHierarchy(FileListData data, GameObject rootGO)
+        {
+            if (data == null || data.Categories == null) return;
+            foreach (var cat in data.Categories)
+            {
+                GameObject catGO = new GameObject($"Category_{cat.CategoryIndex:02d}");
+                catGO.transform.SetParent(rootGO.transform, false);
+
+                foreach (var fn in cat.FileNames)
+                {
+                    GameObject fileGO = new GameObject(fn);
+                    fileGO.transform.SetParent(catGO.transform, false);
+                }
             }
         }
 
