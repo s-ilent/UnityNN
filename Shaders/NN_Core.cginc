@@ -90,7 +90,7 @@ struct appdata_nn
     float3 normal   : NORMAL;
     float4 texcoord : TEXCOORD0;
     float4 texcoord1: TEXCOORD1;
-    half4 color    : COLOR;
+    centroid half4 color    : COLOR;
     UNITY_VERTEX_INPUT_INSTANCE_ID
 };
 
@@ -101,7 +101,7 @@ struct v2f_nn
     float4 uv1          : TEXCOORD1; // xy: MainTex3, zw: BumpMap
     float4 worldPos     : TEXCOORD2; // xyz: worldPos, w: fogFactor
     float3 worldNormal  : TEXCOORD3;
-    half4 color        : COLOR;
+    centroid half4 color        : COLOR;
     UNITY_SHADOW_COORDS(4)
     UNITY_VERTEX_INPUT_INSTANCE_ID
     UNITY_VERTEX_OUTPUT_STEREO
@@ -115,51 +115,44 @@ half3 ApplyTextureBlend(half3 baseCol, half4 layerCol, float mode)
     int blendMode = (int)mode;
     switch (blendMode)
     {
-        case 1: return baseCol * layerCol.rgb;                      // Multiply
-        case 2: return lerp(baseCol, layerCol.rgb, layerCol.a);      // Decal
-        case 3: return layerCol.rgb;                               // Replace
-        case 4: return lerp(baseCol, layerCol.rgb, 0.5);             // Blend
-        case 5: return baseCol + layerCol.rgb;                      // Add
-        case 6: return max(half3(0, 0, 0), baseCol - layerCol.rgb);  // Subtract
+        case 1: return baseCol * layerCol.rgb;                             // Multiply
+        case 2: return lerp(baseCol, layerCol.rgb, layerCol.a);            // Decal / Desert Terrain
+        case 3: return layerCol.rgb;                                       // Replace
+        case 4: return (1.0 - layerCol.a) * baseCol;                       // Inverse Alpha Modulate (SceneC1T2)
+        case 5: return baseCol + layerCol.rgb;                             // Additive (SceneUserMatCallback_Desert)
+        case 6: return max(half3(0.0, 0.0, 0.0), baseCol - layerCol.rgb);  // Subtract
         default: return baseCol;
     }
 }
 
 // --------------------------------------------------------------------------
+// Fog Support
+// --------------------------------------------------------------------------
+void applyUnityFog(inout half3 col, float depth)
+{
+    #if defined(FOG_EXP2) || defined(FOG_EXP) || defined(FOG_LINEAR)
+        half fogFactor = 1.0;
+        #if defined(FOG_LINEAR)
+            fogFactor = depth * unity_FogParams.z + unity_FogParams.w;
+        #elif defined(FOG_EXP)
+            fogFactor = exp2(-unity_FogParams.y * depth);
+        #elif defined(FOG_EXP2)
+            half expVal = unity_FogParams.x * depth;
+            fogFactor = exp2(-expVal * expVal);
+        #endif
+
+        half3 appliedFogColor = unity_FogColor.rgb;
+        #if defined(UNITY_PASS_FORWARDADD)
+            appliedFogColor = fixed3(0, 0, 0);
+        #endif
+
+        col.rgb = lerp(appliedFogColor, col.rgb, saturate(fogFactor));
+    #endif
+}
+
+// --------------------------------------------------------------------------
 // Vertex Shader
 // --------------------------------------------------------------------------
-half getFogType()
-{
-    half fogTypeID = 0;
-	#if defined(FOG_EXP2)
-	fogTypeID = -1;
-	#elif defined(FOG_EXP)
-	fogTypeID = 0;
-	#elif defined(FOG_LINEAR)
-	fogTypeID = 1;
-	#else
-	return 0;
-	#endif
-	return fogTypeID;
-}
-
-half setupPackedFogData(half clipPosZ)
-{
-	#if defined(FOG_EXP2)
-	#elif defined(FOG_EXP)
-	#elif defined(FOG_LINEAR)
-	#else
-	return 0;
-	#endif
-	
-    // Store fog value mapped to 0..1 range.
-	half outFog = UNITY_Z_0_FAR_FROM_CLIPSPACE(clipPosZ) / (_ProjectionParams.z + 32.0);
-
-	// Store fog type in integer component.
-	half fogTypeID = getFogType();
-	
-	return outFog + fogTypeID;
-}
 
 v2f_nn vert_nn(appdata_nn v)
 {
@@ -187,6 +180,16 @@ v2f_nn vert_nn(appdata_nn v)
 // --------------------------------------------------------------------------
 // Material Setup
 // --------------------------------------------------------------------------
+// 
+half2 getMatcapUVs(half3 normal, half3 viewDir)
+{
+    // Based on Masataka SUMI's implementation
+    half3 worldUp = half3(0, 1, 0);
+    half3 worldViewUp = normalize(worldUp - viewDir * dot(viewDir, worldUp));
+    half3 worldViewRight = normalize(cross(viewDir, worldViewUp));
+    return half2(dot(worldViewRight, normal), dot(worldViewUp, normal)) * 0.5 + 0.5;
+}
+
 MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
 {
     MaterialInputs material;
@@ -240,8 +243,8 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     // 4. Matcap Application
     if (_UseMatcap > 0.5)
     {
-        float3 viewNormal = mul((float3x3)UNITY_MATRIX_IT_MV, N);
-        float2 matcapUV = viewNormal.xy * 0.5 + 0.5;
+        float3 viewDir = normalize(_WorldSpaceCameraPos - i.worldPos);
+        float2 matcapUV = getMatcapUVs(N, viewDir);
         half4 matcapCol = tex2D(_MatcapTex, matcapUV) * _MatcapColor;
 
         if (_MatcapMode < 0.5)
@@ -285,47 +288,6 @@ void applyAlphaMask(inout half4 baseColor)
 // --------------------------------------------------------------------------
 // Consolidated Fragment Lighting
 // --------------------------------------------------------------------------
-void applyUnityFog(inout half3 col, half depth)
-{
-    half fogFactor = 1.0;
-    int fogType = 0;
-    #if defined(FOG_EXP2)
-	fogType = 3;
-	#elif defined(FOG_EXP)
-	fogType = 2;
-	#elif defined(FOG_LINEAR)
-	fogType = 1;
-	#else
-	return;
-	#endif
-	
-    // depth = frac(depth) * (_ProjectionParams.z + 32);
-
-    if (fogType == 1) // Is Linear fog active?
-    {
-        fogFactor = depth * unity_FogParams.z + unity_FogParams.w;
-    }
-    if (fogType == 2) // Is Exp fog active?
-    {
-        half exponent = unity_FogParams.y * depth;
-        fogFactor = exp2(-exponent);
-    }
-    if (fogType == 3) // Is Exp2 fog active?
-    {
-        half exponent_val = unity_FogParams.x * depth;
-        fogFactor = exp2(-exponent_val * exponent_val);
-    }
-
-    half3 appliedFogColor = unity_FogColor.rgb;
-
-    #if defined(UNITY_PASS_FORWARDADD)
-        appliedFogColor = fixed3(0,0,0);
-    #endif
-    if (_Mode == 4) appliedFogColor *= 0;
-
-    col.rgb = lerp(appliedFogColor, col.rgb, saturate(fogFactor));
-}
-
 half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 {
     UNITY_SETUP_INSTANCE_ID(i);
@@ -335,17 +297,6 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     applyAlphaMask(material.baseColor);
     
     float fogDepth = distance(_WorldSpaceCameraPos, i.worldPos);
-        
-    if (_Unlit > 0.5)
-    {
-        if (isForwardAdd)
-        {
-            return half4(0, 0, 0, material.baseColor.a);
-        }
-        half3 finalRGB = 16.0 * material.baseColor.rgb + material.emissive;
-        // applyUnityFog(finalRGB, fogDepth);
-        return half4(finalRGB, material.baseColor.a);
-    }
 
     ShadingParams shading = (ShadingParams)0;
     shading.position = i.worldPos;
@@ -358,6 +309,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
 
     float3 L = normalize(UnityWorldSpaceLightDir(shading.position));
     float NdotL = max(0.0, dot(shading.normal, L));
+    
     half3 diffuse = UNITY_PI * _LightColor0.rgb;
     // Todo: Apply lighting to meshes with normals, but only apply color to meshes without.
     // * NdotL * shading.attenuation;
@@ -378,20 +330,39 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
         specular = _LightColor0.rgb * material.specularColor * pow(NdotH, specPower) * shading.attenuation;
     }
 
-    if (isForwardAdd)
-    {
-        return half4(material.baseColor.rgb * diffuse + specular, material.baseColor.a);
-    }
-
     half3 ambient = ShadeSH9(half4(shading.normal, 1.0)) * _AmbientColor.rgb;
-    half3 finalRGB = material.baseColor.rgb * (ambient + diffuse) + specular + material.emissive;
 
     // Todo: In cg0005, there are reflections of cutout geometry using additive blending, but they 
     // should have the cutout applied to them even though they're additive...
 
-    applyUnityFog(finalRGB, fogDepth);
+    float3 finalColor;
 
-    return half4(finalRGB, material.baseColor.a);
+    bool isUnlit = (_Unlit > 0.5);
+    if (isUnlit)
+    {
+    
+        if (isForwardAdd)
+        {
+            return half4(0, 0, 0, material.baseColor.a);
+        }
+        half3 finalRGB = 16.0 * material.baseColor.rgb + material.emissive;
+        // applyUnityFog(finalRGB, fogDepth);
+        return half4(finalRGB, material.baseColor.a);
+        
+        diffuse = 1.0;
+        ambient = 0.0;
+    }
+    
+    if (isForwardAdd)
+    {
+        finalColor = material.baseColor.rgb * diffuse + specular;
+        if (!isUnlit) applyUnityFog(finalColor, fogDepth);
+        return half4(finalColor, material.baseColor.a);
+    };
+    
+    finalColor = material.baseColor.rgb * (ambient + diffuse) + specular + material.emissive;
+    if (!isUnlit) applyUnityFog(finalColor, fogDepth);
+    return half4(finalColor, material.baseColor.a);
 }
 
 half4 fragBase(v2f_nn i, bool isFrontFace : SV_IsFrontFace) : SV_Target
