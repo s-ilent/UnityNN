@@ -383,11 +383,14 @@ namespace SilentTools
         {
             Material mat = new Material(shader) { name = matName };
 
-            // Assign Sega NN Material Metadata Properties
+            uint rawFlags = nMat != null ? (uint)nMat.Flag : 0;
+            uint rawType = nMat != null ? (uint)nMat.Type : 0;
+
+            // Send raw Sega NN metadata to Material Properties
             if (nMat != null)
             {
-                mat.SetFloat("_MaterialFlags", (float)(uint)nMat.Flag);
-                mat.SetFloat("_MaterialType", (float)(uint)nMat.Type);
+                mat.SetFloat("_MaterialFlags", (float)rawFlags);
+                mat.SetFloat("_MaterialType", (float)rawType);
                 mat.SetFloat("_UserDefined", (float)nMat.UserDefined);
             }
 
@@ -398,7 +401,7 @@ namespace SilentTools
             mat.SetFloat("_AlphaToMask", 0.0f);
             mat.SetFloat("_Unlit", 0.0f);
 
-            // Import Material Colours (Diffuse, Ambient, Specular, Emissive) & Power
+            // Import Material Colours
             if (matColour != null)
             {
                 mat.SetColor("_Color", matColour.Diffuse);
@@ -408,6 +411,7 @@ namespace SilentTools
                 mat.SetFloat("_Shininess", Mathf.Clamp01(matColour.Power / 100.0f));
             }
 
+            // Evaluate Multi-Texture Blending from nMat.Flag bits
             if (texMap != null && texMap.NinjaTextureMapDescriptions != null && texList != null && texList.NinjaTextureFiles != null)
             {
                 for (int d = 0; d < texMap.NinjaTextureMapDescriptions.Count; d++)
@@ -438,19 +442,24 @@ namespace SilentTools
                             else if (d == 1)
                             {
                                 mat.SetTexture("_MainTex2", tex);
-                                mat.SetFloat("_MainTex2BlendMode", 1.0f); // Multiply by default
+
+                                // Bit 0x20: Terrain Decal Lerp (SceneC1T2_Desert.msasm)
+                                if ((rawFlags & 0x20) != 0)
+                                    mat.SetFloat("_MainTex2BlendMode", 2.0f); // Decal Lerp
+                                else
+                                    mat.SetFloat("_MainTex2BlendMode", 7.0f); // Inverted Alpha Modulate (SceneC1T2.msasm)
                             }
                             else if (d == 2)
                             {
                                 mat.SetTexture("_MainTex3", tex);
                                 mat.SetFloat("_MainTex3BlendMode", 1.0f);
                             }
-                            else if (lowerName.Contains("nrm") || lowerName.Contains("norm") || lowerName.Contains("bump"))
+                            else if (lowerName.Contains("nrm") || lowerName.Contains("norm") || lowerName.Contains("bump") || (descType & 0x1000) != 0)
                             {
                                 mat.SetTexture("_BumpMap", tex);
                                 mat.SetFloat("_BumpScale", 1.0f);
                             }
-                            else if (lowerName.Contains("spec") || lowerName.Contains("gloss") || lowerName.Contains("pow") || lowerName.Contains("spc"))
+                            else if (lowerName.Contains("spec") || lowerName.Contains("gloss") || lowerName.Contains("pow") || lowerName.Contains("spc") || (descType & 0x4000) != 0)
                             {
                                 mat.SetTexture("_SpecGlossMap", tex);
                             }
@@ -463,6 +472,7 @@ namespace SilentTools
                 }
             }
 
+            // Material Logic (Pipeline State, Blending, ZWrite, Alpha Cutout)
             if (matLogic != null)
             {
                 UnityEngine.Rendering.BlendMode srcBlend = MapNinjaBlendMode(matLogic.SRCBlend, UnityEngine.Rendering.BlendMode.One);
@@ -486,14 +496,13 @@ namespace SilentTools
                     mat.SetFloat("_AlphaTest", 0.0f);
                 }
 
-                bool isAdditiveGlow = (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.One);
+                // Bit 0x08/0x10 or Additive Blending marks material as Unlit Additive Pass (SceneC2T1Add.msasm)
+                bool isAdditiveGlow = ((rawFlags & 0x18) != 0) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.One);
                 if (isAdditiveGlow)
                 {
                     mat.SetFloat("_Unlit", 1.0f);
                 }
 
-                // Sega NN format transparency heuristic:
-                // ZUpdate == true (ZWrite On) indicates solid geometry
                 bool isZWriteOn = matLogic.ZUpdate;
                 bool isAlphaTest = matLogic.Alpha && matLogic.AlphaRef > 0;
                 bool isOpaqueBlendMode = (!matLogic.Blend) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.Zero);
@@ -523,7 +532,7 @@ namespace SilentTools
                         mat.SetShaderPassEnabled("DepthOnly", true);
                     }
                 }
-                else // ZUpdate == false (ZWrite Off) & Blend == true -> True Transparent / Blended Mesh
+                else
                 {
                     mat.SetOverrideTag("RenderType", "Transparent");
                     mat.SetOverrideTag("Queue", "Transparent");

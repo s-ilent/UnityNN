@@ -41,12 +41,10 @@ Shader "NinjaNext/Standard"
         _EmissionMap ("Emission Map", 2D) = "white" {}
         _EmissionPower ("Emission Multiplier / HDR", Float) = 1.0
 
-        [Header(NinjaNext Metadata)]
         _MaterialFlags ("Material Flags", Float) = 0.0
         _MaterialType ("Material Type", Float) = 0.0
         _UserDefined ("User Defined Value", Float) = 0.0
         
-        [Header(System)]
         // Render Pipeline State Controls
         _Mode ("Rendering Mode", Float) = 0.0
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend ("Source Blend", Float) = 1.0
