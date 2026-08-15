@@ -127,6 +127,25 @@ namespace SilentTools.Editor
                     DrawMetricRow("REL Type", "Quest List");
                     DrawMetricRow("Quests", $"{qList.Count}");
                 }
+                else if (m_Context.RelData is ObjectParamData paramData)
+                {
+                    int totalModels = 0;
+                    int totalAnims = 0;
+                    foreach (var o in paramData.ObjectDefinitions.Values)
+                    {
+                        totalModels += o.Models.Count;
+                        totalAnims += o.Animations.Count;
+                    }
+                    DrawMetricRow("REL Type", "Object Parameters");
+                    DrawMetricRow("Object Defs", $"{paramData.ObjectDefinitions.Count}");
+                    DrawMetricRow("Model Refs", $"{totalModels}");
+                    DrawMetricRow("Anim Tracks", $"{totalAnims}");
+                }
+                else if (m_Context.RelData is ObjectParticleInfoData partData)
+                {
+                    DrawMetricRow("REL Type", "Particle Info");
+                    DrawMetricRow("Particle Presets", $"{partData.Entries.Count}");
+                }
             }
 
             EditorGUILayout.Space(6);

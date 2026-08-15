@@ -53,4 +53,33 @@ namespace SilentTools
         public short count;
         public short levelModifier;
     }
+    
+    public class RelObjectParamComponent : MonoBehaviour
+    {
+        public int objID;
+        public string objectName = "";
+        public int groupOneCount;
+        public int modelCount;
+        public int animationCount;
+        public int particleBindingCount;
+        public int soundBindingCount;
+    }
+
+    public class RelObjectHitboxComponent : MonoBehaviour
+    {
+        public int hitboxShape;
+        public Vector3 dimensions;
+        public float radius;
+        public int paramInt5;
+        public int paramInt9;
+    }
+
+    public class RelObjectParticleInfoComponent : MonoBehaviour
+    {
+        public int particleIndex;
+        public string particleName = "";
+        public string particleFileName = "";
+        public float mysteryFloat;
+        public int mysteryInt;
+    }
 }

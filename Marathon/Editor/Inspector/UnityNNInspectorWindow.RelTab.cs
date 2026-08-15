@@ -58,7 +58,7 @@ namespace SilentTools.Editor
             {
                 EditorGUILayout.LabelField($"Collision Mesh Geometry (Vertices: {colData.Vertices.Count}, Polygons: {colData.Polygons.Count})", EditorStyles.boldLabel);
                 EditorGUILayout.Space();
-                
+
                 for (int i = 0; i < Mathf.Min(colData.Polygons.Count, 15); i++)
                 {
                     var poly = colData.Polygons[i];
@@ -123,6 +123,77 @@ namespace SilentTools.Editor
                 {
                     EditorGUILayout.LabelField($"  Route [{i}]: Offset 0x{routeData.Offsets[i]:X8}");
                 }
+            }
+            else if (parsedData is ObjectParamData paramData)
+            {
+                EditorGUILayout.LabelField($"Object Definitions ({paramData.ObjectDefinitions.Count} Objects)", EditorStyles.boldLabel);
+                foreach (var kvp in paramData.ObjectDefinitions)
+                {
+                    int objId = kvp.Key;
+                    var obj = kvp.Value;
+                    string defName = SetObjectDefinitions.GetDefinitionName(objId);
+
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                    EditorGUILayout.LabelField($"[{objId:000}] {defName}", EditorStyles.boldLabel);
+                    EditorGUI.indentLevel++;
+
+                    if (obj.Hitbox != null)
+                    {
+                        EditorGUILayout.LabelField("Hitbox:", $"Shape: {obj.Hitbox.HitboxShape} | Size: ({obj.Hitbox.UnknownFloat2:F1}, {obj.Hitbox.UnknownFloat3:F1}, {obj.Hitbox.UnknownFloat4:F1}) | Radius: {obj.Hitbox.UnknownFloat6:F1}");
+                    }
+
+                    if (obj.Models.Count > 0)
+                    {
+                        EditorGUILayout.LabelField("Models:", string.Join(", ", obj.Models.ConvertAll(m => $"{m.FileName} (ID:{m.Id})")));
+                    }
+
+                    if (obj.Animations.Count > 0)
+                    {
+                        EditorGUILayout.LabelField("Animations:", $"{obj.Animations.Count} Tracks");
+                        for (int a = 0; a < obj.Animations.Count; a++)
+                        {
+                            var anim = obj.Animations[a];
+                            EditorGUILayout.LabelField($"  [{a:00}] Bone: {anim.BoneAnimName} | Tex: {anim.TexAnimName} (ID1: {anim.UnknownIdentifier1}, ID2: {anim.UnknownIdentifier2})");
+                        }
+                    }
+
+                    if (obj.ParticleSoundReferences != null)
+                    {
+                        foreach (var pb in obj.ParticleSoundReferences.ParticleBindings)
+                            EditorGUILayout.LabelField($"  [Particle Event] {pb.ParticleName} -> {pb.EventName}");
+                        foreach (var sb in obj.ParticleSoundReferences.SoundBindings)
+                            EditorGUILayout.LabelField($"  [Sound Event] ID {sb.SoundId} -> {sb.EventName}");
+                    }
+
+                    EditorGUI.indentLevel--;
+                    EditorGUILayout.EndVertical();
+                }
+            }
+            else if (parsedData is ObjectParticleInfoData particleData)
+            {
+                EnsureStyles();
+                EditorGUILayout.LabelField($"Particle Effects Table ({particleData.Entries.Count} Presets)", EditorStyles.boldLabel);
+
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
+                GUILayout.Label("Index", EditorStyles.miniBoldLabel, GUILayout.Width(50));
+                GUILayout.Label("Particle Name", EditorStyles.miniBoldLabel, GUILayout.Width(200));
+                GUILayout.Label("Payload File (.dat)", EditorStyles.miniBoldLabel, GUILayout.ExpandWidth(true));
+                GUILayout.Label("Param Float", EditorStyles.miniBoldLabel, GUILayout.Width(80));
+                EditorGUILayout.EndHorizontal();
+
+                for (int i = 0; i < particleData.Entries.Count; i++)
+                {
+                    var entry = particleData.Entries[i];
+                    GUIStyle rowBg = (i % 2 == 0) ? evenStyle : oddStyle;
+                    EditorGUILayout.BeginHorizontal(rowBg, GUILayout.Height(18));
+                    GUILayout.Label($"[{entry.ParticleIndex:000}]", EditorStyles.miniBoldLabel, GUILayout.Width(50));
+                    GUILayout.Label(entry.ParticleName, EditorStyles.label, GUILayout.Width(200));
+                    GUILayout.Label(entry.ParticleFileName, EditorStyles.label, GUILayout.ExpandWidth(true));
+                    GUILayout.Label($"{entry.MysteryFloat:F1}", EditorStyles.miniLabel, GUILayout.Width(80));
+                    EditorGUILayout.EndHorizontal();
+                }
+                EditorGUILayout.EndVertical();
             }
         }
         #endregion

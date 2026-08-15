@@ -15,8 +15,125 @@ namespace SilentTools
         EnemyLayout,      // enemy*.rel / enemy*.xnr
         QuestList,        // filelist.rel (Quest list)
         Collision,        // collision.xnr / collision.rel
-        FileList          // *filelist.rel (16-category filename list)
+        FileList,         // *filelist.rel (16-category filename list)
+        ObjectParam,      // obj_param.xnr / npc_param.xnr / object_param.xnr
+        ObjectParticleInfo // obj_particle_info.xnr / particle_info.xnr
     }
+
+    // --------------------------------------------------------------------------
+    // Object Parameter Structures (obj_param / npc_param)
+    // --------------------------------------------------------------------------
+
+    public class ObjectGroup1Entry
+    {
+        public byte Byte1 { get; set; }
+        public byte Byte2 { get; set; }
+        public byte Byte3 { get; set; }
+        public byte Byte4 { get; set; }
+        public byte Byte5 { get; set; }
+        public byte Byte6 { get; set; }
+        public byte Byte7 { get; set; }
+        public byte Byte8 { get; set; }
+    }
+
+    public class ObjectHitbox
+    {
+        public int HitboxShape { get; set; }
+        public float UnknownFloat2 { get; set; }
+        public float UnknownFloat3 { get; set; }
+        public float UnknownFloat4 { get; set; }
+        public int UnknownInt5 { get; set; }
+        public float UnknownFloat6 { get; set; }
+        public int UnusedValue7 { get; set; }
+        public int UnusedValue8 { get; set; }
+        public int UnknownInt9 { get; set; }
+    }
+
+    public class ObjectAnimationReference
+    {
+        public int UnknownIdentifier1 { get; set; }
+        public string TexAnimName { get; set; } = "";
+        public float UnknownFloat1 { get; set; }
+        public float UnknownFloat2 { get; set; }
+        public float UnknownFloat3 { get; set; }
+        public int UnknownIdentifier2 { get; set; }
+        public string BoneAnimName { get; set; } = "";
+        public float UnknownFloat4 { get; set; }
+        public float UnknownFloat5 { get; set; }
+        public float UnknownFloat6 { get; set; }
+        public int UnknownInt1 { get; set; }
+        public int UnknownInt2 { get; set; }
+    }
+
+    public class ParticleBinding
+    {
+        public string ParticleName { get; set; } = "";
+        public string EventName { get; set; } = "";
+        public int EmptyInt3 { get; set; }
+        public int EmptyInt4 { get; set; }
+        public int EmptyInt5 { get; set; }
+        public int UsedInt6 { get; set; }
+    }
+
+    public class SoundBinding
+    {
+        public int SoundId { get; set; }
+        public string EventName { get; set; } = "";
+        public float UnknownFloat2 { get; set; }
+        public int EmptyInt3 { get; set; }
+        public int EmptyInt4 { get; set; }
+        public int EmptyInt5 { get; set; }
+    }
+
+    public class ObjectParticleSoundReferenceList
+    {
+        public List<ParticleBinding> ParticleBindings { get; set; } = new List<ParticleBinding>();
+        public List<SoundBinding> SoundBindings { get; set; } = new List<SoundBinding>();
+        public ushort MysteryData { get; set; }
+    }
+
+    public class ObjectModelReference
+    {
+        public int Id { get; set; }
+        public string FileName { get; set; } = "";
+        public float RenderDistance { get; set; }
+    }
+
+    public class ObjectParamEntry
+    {
+        public List<ObjectGroup1Entry> GroupOneEntries { get; } = new List<ObjectGroup1Entry>();
+        public ObjectHitbox Hitbox { get; set; }
+        public List<ObjectAnimationReference> Animations { get; } = new List<ObjectAnimationReference>();
+        public ObjectParticleSoundReferenceList ParticleSoundReferences { get; set; }
+        public List<ObjectModelReference> Models { get; } = new List<ObjectModelReference>();
+    }
+
+    public class ObjectParamData
+    {
+        public Dictionary<int, ObjectParamEntry> ObjectDefinitions { get; set; } = new Dictionary<int, ObjectParamEntry>();
+    }
+
+    // --------------------------------------------------------------------------
+    // Object Particle Info Structures (obj_particle_info)
+    // --------------------------------------------------------------------------
+
+    public class ObjectParticleFileEntry
+    {
+        public int ParticleIndex { get; set; }
+        public string ParticleName { get; set; } = "";
+        public string ParticleFileName { get; set; } = "";
+        public float MysteryFloat { get; set; }
+        public int MysteryInt { get; set; }
+    }
+
+    public class ObjectParticleInfoData
+    {
+        public List<ObjectParticleFileEntry> Entries { get; set; } = new List<ObjectParticleFileEntry>();
+    }
+    
+    // --------------------------------------------------------------------------
+    // Etc...
+    // --------------------------------------------------------------------------
 
     public class FileListCategoryData
     {

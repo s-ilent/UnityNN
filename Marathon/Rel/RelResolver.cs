@@ -66,6 +66,10 @@ namespace SilentTools
                 return RelFileType.StageRouteBlock;
             if (lowerName.Contains("questlist"))
                 return RelFileType.QuestList;
+            if (lowerName.StartsWith("obj_particle_info") || lowerName.Contains("particle_info"))
+                return RelFileType.ObjectParticleInfo;
+            if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
+                return RelFileType.ObjectParam;
 
             // Exclude non-layout parameter files
             if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
@@ -167,7 +171,46 @@ namespace SilentTools
                         }
                     }
 
-                    // 3. Test EnemyLayout
+                    // 3. Test ObjectParticleInfo (listPtr at headerLoc, count at headerLoc + 4)
+                    reader.JumpTo(headerLoc);
+                    int partListPtr = reader.ReadInt32();
+                    int partCount = reader.ReadInt32();
+                    if (partCount > 0 && partCount < 1000 && TryResolveOffset(partListPtr, fileSize, baseAddr, out uint resPartListPtr))
+                    {
+                        if (resPartListPtr + 20 <= fileSize)
+                        {
+                            reader.JumpTo(resPartListPtr);
+                            int testIdx = reader.ReadInt32();
+                            int testNamePtr = reader.ReadInt32();
+                            int testFilePtr = reader.ReadInt32();
+                            if (testIdx >= 0 && testIdx < 5000 &&
+                                TryResolveOffset(testNamePtr, fileSize, baseAddr, out _) &&
+                                TryResolveOffset(testFilePtr, fileSize, baseAddr, out _))
+                            {
+                                return RelFileType.ObjectParticleInfo;
+                            }
+                        }
+                    }
+
+                    // 4. Test ObjectParam (count at headerLoc, tocPtr at headerLoc + 4)
+                    reader.JumpTo(headerLoc);
+                    int objCount = reader.ReadInt32();
+                    int tocPtr = reader.ReadInt32();
+                    if (objCount > 0 && objCount < 1000 && TryResolveOffset(tocPtr, fileSize, baseAddr, out uint resTocPtr))
+                    {
+                        if (resTocPtr + 8 <= fileSize)
+                        {
+                            reader.JumpTo(resTocPtr);
+                            int testObjId = reader.ReadInt32();
+                            int testObjPtr = reader.ReadInt32();
+                            if (testObjId >= 0 && testObjId < 10000 && TryResolveOffset(testObjPtr, fileSize, baseAddr, out _))
+                            {
+                                return RelFileType.ObjectParam;
+                            }
+                        }
+                    }
+
+                    // 5. Test EnemyLayout
                     reader.JumpTo(headerLoc);
                     int eListPtr = reader.ReadInt32();
                     int eListCount = reader.ReadInt32();
@@ -180,7 +223,7 @@ namespace SilentTools
                         }
                     }
 
-                    // 4. Test LndEffect vs LndEnemyLight
+                    // 6. Test LndEffect vs LndEnemyLight
                     reader.JumpTo(headerLoc);
                     int p1 = reader.ReadInt32();
                     int p2 = reader.ReadInt32();
@@ -197,13 +240,13 @@ namespace SilentTools
                             return RelFileType.LndEnemyLight;
                     }
 
-                    // 5. Test FogBank
+                    // 7. Test FogBank
                     if (headerLoc >= 0x2C && (headerLoc - 0x10) % 28 == 0)
                     {
                         return RelFileType.FogBank;
                     }
 
-                    // 6. Test QuestList
+                    // 8. Test QuestList
                     reader.JumpTo(headerLoc);
                     int qListPtr = reader.ReadInt32();
                     int qCount = reader.ReadInt32();
@@ -289,6 +332,37 @@ namespace SilentTools
                 int ptrVal1 = reader.ReadInt32();
                 int ptrVal2 = reader.ReadInt32();
 
+                // Pattern A: Count at headerLoc, Pointer to Table of Contents immediately following (e.g. ObjectParam)
+                if (ptrVal1 > 0 && ptrVal1 <= 5000 && ptrVal2 > (int)fileSize && ptrVal2 < 0x0FFFFFFF)
+                {
+                    int tocOffset = (int)headerLoc - ptrVal1 * 8;
+                    if (tocOffset >= 0x10 && (uint)ptrVal2 >= (uint)tocOffset)
+                    {
+                        uint candidateBase = (uint)ptrVal2 - (uint)tocOffset;
+                        if (candidateBase % 16 == 0 && ((uint)ptrVal2 - candidateBase) < fileSize)
+                        {
+                            reader.Offset = candidateBase;
+                            return candidateBase;
+                        }
+                    }
+                }
+
+                // Pattern B: Pointer to List at headerLoc, Count immediately following (e.g. ObjectParticleInfo)
+                if (ptrVal2 > 0 && ptrVal2 <= 5000 && ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
+                {
+                    int listOffset = (int)headerLoc - ptrVal2 * 20;
+                    if (listOffset >= 0x10 && (uint)ptrVal1 >= (uint)listOffset)
+                    {
+                        uint candidateBase = (uint)ptrVal1 - (uint)listOffset;
+                        if (candidateBase % 16 == 0 && ((uint)ptrVal1 - candidateBase) < fileSize)
+                        {
+                            reader.Offset = candidateBase;
+                            return candidateBase;
+                        }
+                    }
+                }
+
+                // Standard direct pointer offset deduction
                 if (ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
                 {
                     uint candidateBase = (uint)ptrVal1 - 0x10;
@@ -400,6 +474,10 @@ namespace SilentTools
                     return CollisionParser.Parse(reader, fileSize, headerLoc);
                 case RelFileType.FileList:
                     return FileListParser.Parse(reader, baseAddr, headerLoc);
+                case RelFileType.ObjectParam:
+                    return ObjectParamParser.Parse(reader, fileSize, baseAddr, headerLoc);
+                case RelFileType.ObjectParticleInfo:
+                    return ObjectParticleInfoParser.Parse(reader, fileSize, baseAddr, headerLoc);
                 default:
                     return null;
             }
@@ -412,6 +490,8 @@ namespace SilentTools
             if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0;
             if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
             if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
+            if (parsedData is ObjectParamData paramData) return paramData.ObjectDefinitions != null && paramData.ObjectDefinitions.Count > 0;
+            if (parsedData is ObjectParticleInfoData partData) return partData.Entries != null && partData.Entries.Count > 0;
             if (parsedData is LndEffectData effectData) return effectData != null;
             if (parsedData is List<LndFogData> fogs) return fogs != null && fogs.Count > 0;
             if (parsedData is LndCommonData commonData) return commonData != null;
@@ -452,6 +532,12 @@ namespace SilentTools
                 case RelFileType.FileList:
                     if (parsedData is FileListData fList) BuildFileListHierarchy(fList, rootGO);
                     break;
+                case RelFileType.ObjectParam:
+                    if (parsedData is ObjectParamData objParamData) BuildObjectParamHierarchy(objParamData, rootGO, scale);
+                    break;
+                case RelFileType.ObjectParticleInfo:
+                    if (parsedData is ObjectParticleInfoData objPartData) BuildObjectParticleInfoHierarchy(objPartData, rootGO);
+                    break;
                 case RelFileType.Collision:
                     if (parsedData is CollisionMeshData colData)
                     {
@@ -472,6 +558,113 @@ namespace SilentTools
             }
 
             return rootGO;
+        }
+
+        private static void BuildObjectParamHierarchy(ObjectParamData data, GameObject rootGO, float scale)
+        {
+            if (data == null || data.ObjectDefinitions == null) return;
+            foreach (var kvp in data.ObjectDefinitions)
+            {
+                int objId = kvp.Key;
+                ObjectParamEntry entry = kvp.Value;
+                string defName = SetObjectDefinitions.GetDefinitionName(objId);
+
+                GameObject objGO = new GameObject($"[Obj_{objId:000}] {defName}");
+                objGO.transform.SetParent(rootGO.transform, false);
+
+                RelObjectParamComponent comp = objGO.AddComponent<RelObjectParamComponent>();
+                comp.objID = objId;
+                comp.objectName = defName;
+                comp.groupOneCount = entry.GroupOneEntries.Count;
+                comp.modelCount = entry.Models.Count;
+                comp.animationCount = entry.Animations.Count;
+                comp.particleBindingCount = entry.ParticleSoundReferences?.ParticleBindings.Count ?? 0;
+                comp.soundBindingCount = entry.ParticleSoundReferences?.SoundBindings.Count ?? 0;
+
+                if (entry.Hitbox != null)
+                {
+                    RelObjectHitboxComponent hitbox = objGO.AddComponent<RelObjectHitboxComponent>();
+                    hitbox.hitboxShape = entry.Hitbox.HitboxShape;
+                    hitbox.dimensions = new Vector3(entry.Hitbox.UnknownFloat2, entry.Hitbox.UnknownFloat3, entry.Hitbox.UnknownFloat4);
+                    hitbox.radius = entry.Hitbox.UnknownFloat6;
+                    hitbox.paramInt5 = entry.Hitbox.UnknownInt5;
+                    hitbox.paramInt9 = entry.Hitbox.UnknownInt9;
+
+                    if (entry.Hitbox.HitboxShape == 2) // Box collider
+                    {
+                        BoxCollider box = objGO.AddComponent<BoxCollider>();
+                        box.size = new Vector3(entry.Hitbox.UnknownFloat2 * scale * 2f, entry.Hitbox.UnknownFloat3 * scale * 2f, entry.Hitbox.UnknownFloat4 * scale * 2f);
+                    }
+                    else if (entry.Hitbox.HitboxShape == 1 || entry.Hitbox.HitboxShape == 0) // Sphere collider
+                    {
+                        SphereCollider sphere = objGO.AddComponent<SphereCollider>();
+                        sphere.radius = entry.Hitbox.UnknownFloat6 * scale;
+                    }
+                }
+
+                if (entry.Models.Count > 0)
+                {
+                    GameObject modelsContainer = new GameObject("Models");
+                    modelsContainer.transform.SetParent(objGO.transform, false);
+                    foreach (var m in entry.Models)
+                    {
+                        GameObject mGO = new GameObject($"[ID_{m.Id}] {m.FileName} (Dist: {m.RenderDistance:F0})");
+                        mGO.transform.SetParent(modelsContainer.transform, false);
+                    }
+                }
+
+                if (entry.Animations.Count > 0)
+                {
+                    GameObject animsContainer = new GameObject($"Animations ({entry.Animations.Count})");
+                    animsContainer.transform.SetParent(objGO.transform, false);
+                    for (int a = 0; a < entry.Animations.Count; a++)
+                    {
+                        var anim = entry.Animations[a];
+                        string aName = !string.IsNullOrEmpty(anim.BoneAnimName)
+                            ? anim.BoneAnimName
+                            : (!string.IsNullOrEmpty(anim.TexAnimName) ? anim.TexAnimName : $"Anim_{anim.UnknownIdentifier1}");
+                        GameObject aGO = new GameObject($"[{a:00}] {aName}");
+                        aGO.transform.SetParent(animsContainer.transform, false);
+                    }
+                }
+
+                if (entry.ParticleSoundReferences != null)
+                {
+                    if (entry.ParticleSoundReferences.ParticleBindings.Count > 0 || entry.ParticleSoundReferences.SoundBindings.Count > 0)
+                    {
+                        GameObject fxContainer = new GameObject("Events & Sound");
+                        fxContainer.transform.SetParent(objGO.transform, false);
+                        foreach (var pb in entry.ParticleSoundReferences.ParticleBindings)
+                        {
+                            GameObject pbGO = new GameObject($"[FX] {pb.ParticleName} -> {pb.EventName}");
+                            pbGO.transform.SetParent(fxContainer.transform, false);
+                        }
+                        foreach (var sb in entry.ParticleSoundReferences.SoundBindings)
+                        {
+                            GameObject sbGO = new GameObject($"[Sound_{sb.SoundId}] {sb.EventName}");
+                            sbGO.transform.SetParent(fxContainer.transform, false);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void BuildObjectParticleInfoHierarchy(ObjectParticleInfoData data, GameObject rootGO)
+        {
+            if (data == null || data.Entries == null) return;
+            for (int i = 0; i < data.Entries.Count; i++)
+            {
+                var entry = data.Entries[i];
+                GameObject pGO = new GameObject($"[{entry.ParticleIndex:000}] {entry.ParticleName}");
+                pGO.transform.SetParent(rootGO.transform, false);
+
+                RelObjectParticleInfoComponent comp = pGO.AddComponent<RelObjectParticleInfoComponent>();
+                comp.particleIndex = entry.ParticleIndex;
+                comp.particleName = entry.ParticleName;
+                comp.particleFileName = entry.ParticleFileName;
+                comp.mysteryFloat = entry.MysteryFloat;
+                comp.mysteryInt = entry.MysteryInt;
+            }
         }
 
         private static void BuildSetLayoutHierarchy(SetFileData data, GameObject rootGO, float scale)
