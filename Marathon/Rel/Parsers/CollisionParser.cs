@@ -4,193 +4,157 @@ using Marathon.IO;
 
 namespace SilentTools
 {
+    public class CollisionSurfaceComponent : MonoBehaviour
+    {
+        [Tooltip("Surface Material Flags extracted from collision file.")]
+        public uint surfaceFlags;
+        public Vector4 planeBounds;
+    }
+
     public static class CollisionParser
     {
         public static CollisionMeshData Parse(BinaryReaderEx reader, uint fileSize, uint headerLoc)
         {
             CollisionMeshData data = new CollisionMeshData();
 
-            if (headerLoc + 16 > fileSize) return data;
+            if (fileSize < 0x20) return data;
 
-            // 1. Read Header Pointers & Counts
-            reader.JumpTo(headerLoc);
-            uint val0 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
-            uint val1 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
-            uint val2 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
-            uint val3 = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
-
-            // Dynamically identify if this represents a global vertex-indexed mesh
+            uint polyLoc = 0x10; // Polygon / Box Collider array start in payload (file 0x70)
             uint vtxLoc = 0;
-            int vtxCount = 0;
-            int polyCount = 0;
+            int vtxCountHeader = 0;
 
-            List<uint> candidateOffsets = new List<uint> { val0, val1, val2, val3 };
-            List<int> candidateCounts = new List<int> { (int)val0, (int)val1, (int)val2, (int)val3 };
-
-            // Find the most valid global vertex array among the offsets (if any)
-            foreach (uint opt in candidateOffsets)
+            // 1. Resolve NXR Descriptor from pointer at payload 0x08
+            if (fileSize >= 0x10)
             {
-                foreach (int count in candidateCounts)
+                reader.JumpTo(0x08);
+                uint rawPtr = reader.ReadUInt32();
+                
+                // Descriptor struct starts 4 bytes before rawPtr
+                uint descPtr = rawPtr >= 4 ? rawPtr - 4 : 0;
+
+                if (descPtr > 0 && descPtr <= fileSize - 20)
                 {
-                    if (count > 4 && count < 100000 && IsValidVertexArray(reader, opt, count, fileSize))
+                    reader.JumpTo(descPtr);
+                    uint quaOff = reader.ReadUInt32();
+                    uint polyCountField = reader.ReadUInt32();
+                    uint vtxOff = reader.ReadUInt32();
+                    uint vtxCountField = reader.ReadUInt32();
+                    uint treeOff = reader.ReadUInt32();
+
+                    if (vtxOff < fileSize && vtxCountField > 0 && vtxCountField < 100000)
                     {
-                        vtxLoc = opt;
-                        vtxCount = count;
-                        break;
-                    }
-                }
-                if (vtxLoc != 0) break;
-            }
-
-            // Detect polygon count for global mesh
-            if (vtxLoc != 0)
-            {
-                foreach (int count in candidateCounts)
-                {
-                    if (count > 0 && count != vtxCount && count < vtxCount)
-                    {
-                        polyCount = count;
-                        break;
-                    }
-                }
-
-                uint polyLoc = 0x10; // The polygon array always starts immediately after the 16-byte chunk header
-                int calculatedPolyCount = (int)((vtxLoc - 0x10) / 28);
-                if (polyCount <= 0 || polyCount > calculatedPolyCount)
-                {
-                    polyCount = calculatedPolyCount;
-                }
-
-                // Read Polygons (28 bytes each)
-                if (polyCount > 0 && polyLoc < fileSize)
-                {
-                    reader.JumpTo(polyLoc);
-                    for (int i = 0; i < polyCount; i++)
-                    {
-                        if (reader.BaseStream.Position + 28 > fileSize) break;
-
-                        CollisionPolygon poly = new CollisionPolygon();
-                        poly.Flags = reader.ReadUInt32();
-                        poly.VertexIndices[0] = reader.ReadUInt16();
-                        poly.VertexIndices[1] = reader.ReadUInt16();
-                        poly.VertexIndices[2] = reader.ReadUInt16();
-                        poly.VertexIndices[3] = reader.ReadUInt16();
-                        poly.Plane = reader.ReadVector4();
-
-                        data.Polygons.Add(poly);
-                    }
-                }
-
-                // Read Vertices (Vector3: 12 bytes each)
-                if (vtxCount > 0 && vtxLoc > 0 && vtxLoc < fileSize)
-                {
-                    reader.JumpTo(vtxLoc);
-                    for (int i = 0; i < vtxCount; i++)
-                    {
-                        if (reader.BaseStream.Position + 12 > fileSize) break;
-                        data.Vertices.Add(reader.ReadVector3());
+                        vtxLoc = vtxOff;
+                        vtxCountHeader = (int)vtxCountField;
                     }
                 }
             }
 
-            // 2b. Primitive-Based Collider Parser (Scan for 'qua\0' or 'tri\0' chunks)
-            if (data.Vertices.Count == 0)
+            // Fallback vertex array offset
+            if (vtxLoc == 0 || vtxLoc >= fileSize)
             {
-                reader.JumpTo(0);
-                byte[] payload = reader.ReadBytes((int)fileSize);
+                vtxLoc = FindVertexArrayOffset(reader, fileSize);
+            }
 
-                int idx = 0;
-                while (idx < payload.Length - 4)
+            // 2. Read Vertices (12-byte Vector3)
+            if (vtxLoc > 0 && vtxLoc < fileSize)
+            {
+                reader.JumpTo(vtxLoc);
+                int maxPossibleVertices = (int)((fileSize - vtxLoc) / 12);
+
+                for (int i = 0; i < maxPossibleVertices; i++)
                 {
-                    // Scan for quad primitive ("qua\0")
-                    if (payload[idx] == 0x71 && payload[idx + 1] == 0x75 && payload[idx + 2] == 0x61 && payload[idx + 3] == 0x00)
+                    if (vtxCountHeader > 0 && data.Vertices.Count >= vtxCountHeader) break;
+                    if (reader.BaseStream.Position + 12 > fileSize) break;
+
+                    Vector3 pos = reader.ReadVector3();
+
+                    if (float.IsNaN(pos.x) || float.IsNaN(pos.y) || float.IsNaN(pos.z) ||
+                        float.IsInfinity(pos.x) || float.IsInfinity(pos.y) || float.IsInfinity(pos.z))
                     {
-                        int vtxOffset = idx + 8;
-                        if (vtxOffset + 48 <= payload.Length)
-                        {
-                            ushort startVtxIdx = (ushort)data.Vertices.Count;
-
-                            for (int j = 0; j < 4; j++)
-                            {
-                                float vx = System.BitConverter.ToSingle(payload, vtxOffset + j * 12);
-                                float vy = System.BitConverter.ToSingle(payload, vtxOffset + j * 12 + 4);
-                                float vz = System.BitConverter.ToSingle(payload, vtxOffset + j * 12 + 8);
-                                data.Vertices.Add(new Vector3(vx, vy, vz));
-                            }
-
-                            CollisionPolygon poly = new CollisionPolygon();
-                            poly.Flags = 0x01010101;
-                            poly.VertexIndices[0] = startVtxIdx;
-                            poly.VertexIndices[1] = (ushort)(startVtxIdx + 1);
-                            poly.VertexIndices[2] = (ushort)(startVtxIdx + 2);
-                            poly.VertexIndices[3] = (ushort)(startVtxIdx + 3);
-                            data.Polygons.Add(poly);
-                        }
+                        break;
                     }
-                    // Scan for triangle primitive ("tri\0")
-                    else if (payload[idx] == 0x74 && payload[idx + 1] == 0x72 && payload[idx + 2] == 0x69 && payload[idx + 3] == 0x00)
+
+                    if (Mathf.Abs(pos.x) > 100000f || Mathf.Abs(pos.y) > 100000f || Mathf.Abs(pos.z) > 100000f)
                     {
-                        int vtxOffset = idx + 8;
-                        if (vtxOffset + 36 <= payload.Length)
-                        {
-                            ushort startVtxIdx = (ushort)data.Vertices.Count;
-
-                            for (int j = 0; j < 3; j++)
-                            {
-                                float vx = System.BitConverter.ToSingle(payload, vtxOffset + j * 12);
-                                float vy = System.BitConverter.ToSingle(payload, vtxOffset + j * 12 + 4);
-                                float vz = System.BitConverter.ToSingle(payload, vtxOffset + j * 12 + 8);
-                                data.Vertices.Add(new Vector3(vx, vy, vz));
-                            }
-
-                            CollisionPolygon poly = new CollisionPolygon();
-                            poly.Flags = 0x01010101;
-                            poly.VertexIndices[0] = startVtxIdx;
-                            poly.VertexIndices[1] = (ushort)(startVtxIdx + 1);
-                            poly.VertexIndices[2] = (ushort)(startVtxIdx + 2);
-                            poly.VertexIndices[3] = (ushort)(startVtxIdx + 2);
-                            data.Polygons.Add(poly);
-                        }
+                        break;
                     }
-                    idx++;
+
+                    data.Vertices.Add(pos);
+                }
+            }
+
+            // 3. Read 28-Byte Records (Polygons / Bounding Volumes)
+            if (polyLoc < fileSize && data.Vertices.Count > 0)
+            {
+                reader.JumpTo(polyLoc);
+                int maxPossiblePolys = (int)((vtxLoc - polyLoc) / 28);
+
+                for (int i = 0; i < maxPossiblePolys; i++)
+                {
+                    if (reader.BaseStream.Position + 28 > fileSize) break;
+
+                    uint flags = reader.ReadUInt32();
+                    ushort v0 = reader.ReadUInt16();
+                    ushort v1 = reader.ReadUInt16();
+                    ushort v2 = reader.ReadUInt16();
+                    ushort v3 = reader.ReadUInt16();
+                    Vector4 bounds = reader.ReadVector4();
+
+                    // Reached BVH spatial tree boundary
+                    if (v0 >= data.Vertices.Count || v1 >= data.Vertices.Count || 
+                        v2 >= data.Vertices.Count || v3 >= data.Vertices.Count)
+                    {
+                        break;
+                    }
+
+                    if (float.IsNaN(bounds.x) || float.IsNaN(bounds.y) || float.IsNaN(bounds.z) || float.IsNaN(bounds.w) ||
+                        float.IsInfinity(bounds.x) || float.IsInfinity(bounds.y) || float.IsInfinity(bounds.z) || float.IsInfinity(bounds.w))
+                    {
+                        break;
+                    }
+
+                    CollisionPolygon poly = new CollisionPolygon();
+                    poly.Flags = flags;
+                    poly.VertexIndices[0] = v0;
+                    poly.VertexIndices[1] = v1;
+                    poly.VertexIndices[2] = v2;
+                    poly.VertexIndices[3] = v3;
+                    poly.Plane = bounds;
+
+                    data.Polygons.Add(poly);
                 }
             }
 
             return data;
         }
 
-        private static bool IsValidVertexArray(BinaryReaderEx reader, uint offset, int count, uint fileSize)
+        private static uint FindVertexArrayOffset(BinaryReaderEx reader, uint fileSize)
         {
-            if (offset < 0x10 || offset >= fileSize) return false;
             long origPos = reader.BaseStream.Position;
             try
             {
-                reader.JumpTo(offset);
-                for (int i = 0; i < Mathf.Min(count, 5); i++)
+                reader.JumpTo(0);
+                byte[] payload = reader.ReadBytes((int)fileSize);
+
+                for (int i = 0; i < payload.Length - 8; i++)
                 {
-                    if (reader.BaseStream.Position + 12 > fileSize) break;
-                    Vector3 v = reader.ReadVector3();
-                    if (float.IsNaN(v.x) || float.IsNaN(v.y) || float.IsNaN(v.z) ||
-                        float.IsInfinity(v.x) || float.IsInfinity(v.y) || float.IsInfinity(v.z))
+                    if (payload[i] == 0x71 && payload[i + 1] == 0x75 && 
+                        payload[i + 2] == 0x61 && payload[i + 3] == 0x00)
                     {
-                        return false;
-                    }
-                    if ((v.x != 0 && Mathf.Abs(v.x) < 1e-10f) || 
-                        (v.y != 0 && Mathf.Abs(v.y) < 1e-10f) || 
-                        (v.z != 0 && Mathf.Abs(v.z) < 1e-10f))
-                    {
-                        return false;
+                        return (uint)(i + 8);
                     }
                 }
-                return true;
             }
             finally
             {
                 reader.JumpTo(origPos);
             }
+
+            return 0x518C;
         }
 
-        public static Mesh CreateUnityMesh(CollisionMeshData colData, float scale, string name)
+        // Builds Mesh, Box Colliders for planes/volumes, and surface tags
+        public static Mesh CreateUnityMeshAndColliders(CollisionMeshData colData, float scale, string name, GameObject parentGO)
         {
             if (colData == null || colData.Vertices == null || colData.Vertices.Count == 0) return null;
 
@@ -205,8 +169,14 @@ namespace SilentTools
             }
 
             List<int> triangles = new List<int>();
-            foreach (var poly in colData.Polygons)
+
+            // Child container for generated Box Colliders
+            GameObject boxesContainer = new GameObject("BoxColliders");
+            boxesContainer.transform.SetParent(parentGO.transform, false);
+
+            for (int i = 0; i < colData.Polygons.Count; i++)
             {
+                var poly = colData.Polygons[i];
                 if (poly == null || poly.VertexIndices == null || poly.VertexIndices.Length < 3) continue;
 
                 ushort v0 = poly.VertexIndices[0];
@@ -216,25 +186,72 @@ namespace SilentTools
 
                 if (v0 < positions.Length && v1 < positions.Length && v2 < positions.Length)
                 {
-                    if (v0 != v1 && v1 != v2 && v0 != v2)
+                    Vector3 p0 = positions[v0];
+                    Vector3 p1 = positions[v1];
+                    Vector3 p2 = positions[v2];
+                    Vector3 p3 = v3 < positions.Length ? positions[v3] : p2;
+
+                    // 1. Dynamic Quad Triangulation (Prevents Bowtie/Twisted Quad Connections)
+                    if (v2 == v3 || v3 == v1) // Triangle
                     {
                         triangles.Add(v0);
                         triangles.Add(v2);
                         triangles.Add(v1);
                     }
-
-                    if (v3 < positions.Length && v3 != v0 && v3 != v1 && v3 != v2)
+                    else // Quad: Select diagonal that produces matching, co-planar triangle normals
                     {
-                        triangles.Add(v0);
-                        triangles.Add(v3);
-                        triangles.Add(v2);
+                        Vector3 n1A = Vector3.Cross(p2 - p0, p1 - p0);
+                        Vector3 n2A = Vector3.Cross(p3 - p0, p2 - p0);
+                        float dotA = Vector3.Dot(n1A, n2A);
+
+                        Vector3 n1B = Vector3.Cross(p3 - p0, p1 - p0);
+                        Vector3 n2B = Vector3.Cross(p3 - p1, p2 - p1);
+                        float dotB = Vector3.Dot(n1B, n2B);
+
+                        if (dotA >= dotB)
+                        {
+                            triangles.Add(v0); triangles.Add(v2); triangles.Add(v1);
+                            triangles.Add(v0); triangles.Add(v3); triangles.Add(v2);
+                        }
+                        else
+                        {
+                            triangles.Add(v0); triangles.Add(v3); triangles.Add(v1);
+                            triangles.Add(v1); triangles.Add(v3); triangles.Add(v2);
+                        }
                     }
+
+                    // 2. Import Plane / Volume as BoxCollider
+                    float pMinX = Mathf.Min(Mathf.Min(p0.x, p1.x), Mathf.Min(p2.x, p3.x));
+                    float pMaxX = Mathf.Max(Mathf.Max(p0.x, p1.x), Mathf.Max(p2.x, p3.x));
+                    float pMinY = Mathf.Min(Mathf.Min(p0.y, p1.y), Mathf.Min(p2.y, p3.y));
+                    float pMaxY = Mathf.Max(Mathf.Max(p0.y, p1.y), Mathf.Max(p2.y, p3.y));
+                    float pMinZ = Mathf.Min(Mathf.Min(p0.z, p1.z), Mathf.Min(p2.z, p3.z));
+                    float pMaxZ = Mathf.Max(Mathf.Max(p0.z, p1.z), Mathf.Max(p2.z, p3.z));
+
+                    Vector3 center = new Vector3((pMinX + pMaxX) * 0.5f, (pMinY + pMaxY) * 0.5f, (pMinZ + pMaxZ) * 0.5f);
+                    Vector3 size = new Vector3(Mathf.Max(0.1f, pMaxX - pMinX), Mathf.Max(0.1f, pMaxY - pMinY), Mathf.Max(0.1f, pMaxZ - pMinZ));
+
+                    GameObject boxGO = new GameObject($"BoxCollider_{i:000}_Flags_{poly.Flags:X}");
+                    boxGO.transform.SetParent(boxesContainer.transform, false);
+                    boxGO.transform.localPosition = center;
+
+                    BoxCollider box = boxGO.AddComponent<BoxCollider>();
+                    box.size = size;
+
+                    CollisionSurfaceComponent surfComp = boxGO.AddComponent<CollisionSurfaceComponent>();
+                    surfComp.surfaceFlags = poly.Flags;
+                    surfComp.planeBounds = poly.Plane;
                 }
             }
 
             if (triangles.Count < 3) return null;
 
             Mesh mesh = new Mesh { name = name };
+            if (positions.Length > 65535)
+            {
+                mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            }
+
             mesh.vertices = positions;
             mesh.triangles = triangles.ToArray();
             mesh.RecalculateNormals();
