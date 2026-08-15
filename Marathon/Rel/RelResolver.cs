@@ -1,5 +1,6 @@
 // File: Marathon/Rel/RelResolver.cs
 using UnityEngine;
+using System;
 using System.IO;
 using System.Collections.Generic;
 using Marathon.IO;
@@ -48,7 +49,7 @@ namespace SilentTools
 
             if (lowerName.Equals("filelist.rel") || lowerName.Equals("filelist.xnr"))
                 return RelFileType.QuestList;
-            if (lowerName.Contains("filelist"))
+            if (lowerName.Contains("filelist") || lowerName.Contains("scene_filelist"))
                 return RelFileType.FileList;
             if (lowerName.Contains("collision") || lowerName.Contains("colli") || lowerName.EndsWith("col.rel") || lowerName.EndsWith("col.xnr"))
                 return RelFileType.Collision;
@@ -71,15 +72,10 @@ namespace SilentTools
             if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
                 return RelFileType.ObjectParam;
 
-            // Exclude non-layout parameter files
-            if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
-                return RelFileType.Unknown;
-
             if ((lowerName.StartsWith("enemy") || lowerName.Contains("param") || lowerName.Contains("data") || lowerName.Contains("drop") || lowerName.Contains("atk") || lowerName.Contains("spawn")) &&
                 (lowerName.EndsWith(".rel") || lowerName.EndsWith(".xnr") || lowerName.EndsWith(".gnr") || lowerName.EndsWith(".znr")))
                 return RelFileType.EnemyLayout;
 
-            // If filename matching returned Unknown, inspect raw binary payload
             return DetectRelTypeFromData(rawData);
         }
 
@@ -118,15 +114,16 @@ namespace SilentTools
 
                 uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
 
-                if (headerLoc + 8 <= fileSize)
+                if (headerLoc + 4 <= fileSize)
                 {
                     reader.JumpTo(headerLoc);
 
                     // 1. Test 16-Category FileList (*filelist.rel)
+                    int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
                     int activeCatCount = 0;
-                    for (int i = 0; i < 16; i++)
+                    for (int i = 0; i < maxCategories; i++)
                     {
-                        if (headerLoc + (i + 1) * 4 > fileSize) break;
+                        if (reader.BaseStream.Position + 4 > fileSize) break;
                         int catPtr = reader.ReadInt32();
                         if (catPtr > 0 && TryResolveOffset(catPtr, fileSize, baseAddr, out uint resCatPtr))
                         {
@@ -150,28 +147,7 @@ namespace SilentTools
                         return RelFileType.FileList;
                     }
 
-                    // 2. Test SetLayout
-                    reader.JumpTo(headerLoc);
-                    short areaID = reader.ReadInt16();
-                    short mapCount = reader.ReadInt16();
-                    int mainListPtr = reader.ReadInt32();
-
-                    if (mapCount > 0 && mapCount < 100 && TryResolveOffset(mainListPtr, fileSize, baseAddr, out uint resMainListPtr))
-                    {
-                        if (resMainListPtr + 8 <= fileSize)
-                        {
-                            reader.JumpTo(resMainListPtr);
-                            reader.ReadInt16(); // mapNumber
-                            short listCount = reader.ReadInt16();
-                            int listPtr = reader.ReadInt32();
-                            if (listCount >= 0 && listCount < 200 && TryResolveOffset(listPtr, fileSize, baseAddr, out _))
-                            {
-                                return RelFileType.SetLayout;
-                            }
-                        }
-                    }
-
-                    // 3. Test ObjectParticleInfo (listPtr at headerLoc, count at headerLoc + 4)
+                    // 2. Test ObjectParticleInfo
                     reader.JumpTo(headerLoc);
                     int partListPtr = reader.ReadInt32();
                     int partCount = reader.ReadInt32();
@@ -192,7 +168,7 @@ namespace SilentTools
                         }
                     }
 
-                    // 4. Test ObjectParam (count at headerLoc, tocPtr at headerLoc + 4)
+                    // 3. Test ObjectParam
                     reader.JumpTo(headerLoc);
                     int objCount = reader.ReadInt32();
                     int tocPtr = reader.ReadInt32();
@@ -206,6 +182,27 @@ namespace SilentTools
                             if (testObjId >= 0 && testObjId < 10000 && TryResolveOffset(testObjPtr, fileSize, baseAddr, out _))
                             {
                                 return RelFileType.ObjectParam;
+                            }
+                        }
+                    }
+
+                    // 4. Test SetLayout
+                    reader.JumpTo(headerLoc);
+                    short areaID = reader.ReadInt16();
+                    short mapCount = reader.ReadInt16();
+                    int mainListPtr = reader.ReadInt32();
+
+                    if (mapCount > 0 && mapCount < 100 && TryResolveOffset(mainListPtr, fileSize, baseAddr, out uint resMainListPtr))
+                    {
+                        if (resMainListPtr + 8 <= fileSize)
+                        {
+                            reader.JumpTo(resMainListPtr);
+                            reader.ReadInt16(); // mapNumber
+                            short listCount = reader.ReadInt16();
+                            int listPtr = reader.ReadInt32();
+                            if (listCount >= 0 && listCount < 200 && TryResolveOffset(listPtr, fileSize, baseAddr, out _))
+                            {
+                                return RelFileType.SetLayout;
                             }
                         }
                     }
@@ -326,13 +323,54 @@ namespace SilentTools
             {
                 baseAddr = headerLoc - 0x10;
             }
-            else if (headerLoc + 8 <= fileSize)
+            else if (headerLoc + 4 <= fileSize)
             {
                 reader.JumpTo(headerLoc);
                 int ptrVal1 = reader.ReadInt32();
-                int ptrVal2 = reader.ReadInt32();
+                int ptrVal2 = reader.BaseStream.Position + 4 <= fileSize ? reader.ReadInt32() : 0;
 
-                // Pattern A: Count at headerLoc, Pointer to Table of Contents immediately following (e.g. ObjectParam)
+                // 1. Check 16-category FileList (*filelist.rel)
+                int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
+                reader.JumpTo(headerLoc);
+                int firstValidTopPtr = 0;
+                for (int i = 0; i < maxCategories; i++)
+                {
+                    int p = reader.ReadInt32();
+                    if (firstValidTopPtr == 0 && p > (int)fileSize && p < 0x0FFFFFFF)
+                    {
+                        firstValidTopPtr = p;
+                    }
+                }
+
+                if (firstValidTopPtr != 0)
+                {
+                    for (int backStep = 8; backStep <= 0x100; backStep += 8)
+                    {
+                        int catOffset = (int)headerLoc - backStep;
+                        if (catOffset >= 0x10)
+                        {
+                            uint candBase = (uint)firstValidTopPtr - (uint)catOffset;
+                            if (candBase % 16 == 0 && ((uint)firstValidTopPtr - candBase) < fileSize)
+                            {
+                                reader.JumpTo(catOffset);
+                                int cSize = reader.ReadInt32();
+                                int cAddr = reader.ReadInt32();
+                                if (cSize > 0 && cSize < 5000)
+                                {
+                                    uint cLoc = (uint)cAddr >= candBase ? (uint)cAddr - candBase : (uint)cAddr;
+                                    if (cLoc > 0 && cLoc < fileSize)
+                                    {
+                                        baseAddr = candBase;
+                                        reader.Offset = baseAddr;
+                                        return baseAddr;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2. Pattern A: Count at headerLoc, Pointer to Table of Contents following (ObjectParam)
                 if (ptrVal1 > 0 && ptrVal1 <= 5000 && ptrVal2 > (int)fileSize && ptrVal2 < 0x0FFFFFFF)
                 {
                     int tocOffset = (int)headerLoc - ptrVal1 * 8;
@@ -341,13 +379,14 @@ namespace SilentTools
                         uint candidateBase = (uint)ptrVal2 - (uint)tocOffset;
                         if (candidateBase % 16 == 0 && ((uint)ptrVal2 - candidateBase) < fileSize)
                         {
-                            reader.Offset = candidateBase;
-                            return candidateBase;
+                            baseAddr = candidateBase;
+                            reader.Offset = baseAddr;
+                            return baseAddr;
                         }
                     }
                 }
 
-                // Pattern B: Pointer to List at headerLoc, Count immediately following (e.g. ObjectParticleInfo)
+                // 3. Pattern B: Pointer to List at headerLoc, Count following (ObjectParticleInfo)
                 if (ptrVal2 > 0 && ptrVal2 <= 5000 && ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
                 {
                     int listOffset = (int)headerLoc - ptrVal2 * 20;
@@ -356,13 +395,14 @@ namespace SilentTools
                         uint candidateBase = (uint)ptrVal1 - (uint)listOffset;
                         if (candidateBase % 16 == 0 && ((uint)ptrVal1 - candidateBase) < fileSize)
                         {
-                            reader.Offset = candidateBase;
-                            return candidateBase;
+                            baseAddr = candidateBase;
+                            reader.Offset = baseAddr;
+                            return baseAddr;
                         }
                     }
                 }
 
-                // Standard direct pointer offset deduction
+                // 4. Standard Direct Offset Deduction
                 if (ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
                 {
                     uint candidateBase = (uint)ptrVal1 - 0x10;
@@ -420,7 +460,7 @@ namespace SilentTools
                     typesToTry.Add(relType);
                 }
 
-                foreach (RelFileType t in System.Enum.GetValues(typeof(RelFileType)))
+                foreach (RelFileType t in Enum.GetValues(typeof(RelFileType)))
                 {
                     if (t != RelFileType.Unknown && !typesToTry.Contains(t))
                     {
@@ -440,13 +480,13 @@ namespace SilentTools
                             return parsed;
                         }
                     }
-                    catch (System.Exception)
+                    catch (Exception)
                     {
                         // Try next candidate parser
                     }
                 }
 
-                throw new System.IO.InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized or corrupted format structure.");
+                throw new InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized or corrupted format structure.");
             }
         }
 
@@ -492,16 +532,21 @@ namespace SilentTools
             if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
             if (parsedData is ObjectParamData paramData) return paramData.ObjectDefinitions != null && paramData.ObjectDefinitions.Count > 0;
             if (parsedData is ObjectParticleInfoData partData) return partData.Entries != null && partData.Entries.Count > 0;
-            if (parsedData is LndEffectData effectData) return effectData != null;
+            if (parsedData is LndEffectData effectData)
+            {
+                return (effectData.Fog != null && effectData.Fog.FarPlane > 0f) ||
+                       (effectData.PlayerLight1 != null && effectData.PlayerLight1.LightColor != Color.white) ||
+                       (effectData.TopGradient != null && effectData.TopGradient.EndHeight > 0f) ||
+                       effectData.SunPosition != Vector3.zero;
+            }
             if (parsedData is List<LndFogData> fogs) return fogs != null && fogs.Count > 0;
-            if (parsedData is LndCommonData commonData) return commonData != null;
-            if (parsedData is LndEnemyLightData enemyLight) return enemyLight != null;
+            if (parsedData is LndCommonData commonData) return !string.IsNullOrEmpty(commonData.NblFilenameFragment) || commonData.UnknownFloat != 0f;
+            if (parsedData is LndEnemyLightData enemyLight) return enemyLight != null && enemyLight.Light1 != null && enemyLight.Light1.LightColor != Color.white;
             if (parsedData is List<QuestListingData> questList) return questList != null && questList.Count > 0;
             if (parsedData is StageBlockRouteData routeData) return routeData != null && routeData.Offsets.Count > 0;
-            return true;
+            return false;
         }
 
-        #region Unity Scene Builder
         public static GameObject ResolveRelAsset(object parsedData, RelFileType relType, string assetName, float scale = 0.05f, UnityEditor.AssetImporters.AssetImportContext ctx = null)
         {
             GameObject rootGO = new GameObject(assetName);
@@ -509,7 +554,8 @@ namespace SilentTools
             switch (relType)
             {
                 case RelFileType.SetLayout:
-                    if (parsedData is SetFileData setData) BuildSetLayoutHierarchy(setData, rootGO, scale);
+                    if (parsedData is SetFileData setData)
+                        BuildSetLayoutHierarchy(setData, rootGO, scale, ctx?.assetPath, ctx);
                     break;
                 case RelFileType.LndEffect:
                     if (parsedData is LndEffectData effectData) BuildLndEffectHierarchy(effectData, rootGO);
@@ -560,6 +606,83 @@ namespace SilentTools
             return rootGO;
         }
 
+        private static void BuildSetLayoutHierarchy(SetFileData data, GameObject rootGO, float scale, string assetPath = null, UnityEditor.AssetImporters.AssetImportContext ctx = null)
+        {
+            if (data == null || data.MapData == null) return;
+
+            ResolvedStageContext stageCtx = !string.IsNullOrEmpty(assetPath)
+                ? RelFolderResolver.ResolveAdjacentStageFiles(assetPath, ctx)
+                : new ResolvedStageContext();
+
+            foreach (var map in data.MapData)
+            {
+                GameObject mapGO = new GameObject($"Map_{map.MapNumber:00}");
+                mapGO.transform.SetParent(rootGO.transform, false);
+
+                for (int h = 0; h < map.Headers.Count; h++)
+                {
+                    var header = map.Headers[h];
+                    GameObject groupGO = new GameObject($"Group_{header.ListIndex:00}");
+                    groupGO.transform.SetParent(mapGO.transform, false);
+
+                    foreach (var obj in header.Objects)
+                    {
+                        string defName = SetObjectDefinitions.GetDefinitionName(obj.ObjID);
+                        GameObject objGO = new GameObject($"[Obj_{obj.ObjID:000}] {defName}");
+                        objGO.transform.SetParent(groupGO.transform, false);
+
+                        Vector3 pos = obj.Position;
+                        pos.x *= -1f * scale;
+                        pos.y *= scale;
+                        pos.z *= scale;
+
+                        objGO.transform.localPosition = pos;
+                        objGO.transform.localEulerAngles = new Vector3(-obj.Rotation.x, -obj.Rotation.y, -obj.Rotation.z);
+
+                        RelObjectMetadataComponent metaComp = objGO.AddComponent<RelObjectMetadataComponent>();
+                        metaComp.objID = obj.ObjID;
+                        metaComp.objectName = defName;
+                        metaComp.originalPosition = obj.Position;
+                        metaComp.originalRotation = obj.Rotation;
+                        metaComp.headerInt1 = obj.HeaderInt1;
+                        metaComp.headerInt2 = obj.HeaderInt2;
+                        metaComp.headerInt3 = obj.HeaderInt3;
+                        metaComp.metadata = obj.Metadata;
+
+                        if (stageCtx.ObjectParams != null && stageCtx.ObjectParams.ObjectDefinitions.TryGetValue(obj.ObjID, out ObjectParamEntry paramEntry))
+                        {
+                            if (paramEntry.Hitbox != null)
+                            {
+                                var hb = paramEntry.Hitbox;
+                                if (hb.HitboxShape == 2)
+                                {
+                                    BoxCollider box = objGO.AddComponent<BoxCollider>();
+                                    box.size = new Vector3(hb.UnknownFloat2 * scale * 2f, hb.UnknownFloat3 * scale * 2f, hb.UnknownFloat4 * scale * 2f);
+                                }
+                                else if (hb.HitboxShape == 1 || hb.HitboxShape == 0)
+                                {
+                                    SphereCollider sphere = objGO.AddComponent<SphereCollider>();
+                                    sphere.radius = hb.UnknownFloat6 * scale;
+                                }
+                            }
+
+                            if (paramEntry.Models.Count > 0)
+                            {
+                                foreach (var modelRef in paramEntry.Models)
+                                {
+                                    GameObject modelInstance = RelFolderResolver.FindAndInstantiateModelAsset(modelRef.FileName, stageCtx.BaseDirectory);
+                                    if (modelInstance != null)
+                                    {
+                                        modelInstance.transform.SetParent(objGO.transform, false);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         private static void BuildObjectParamHierarchy(ObjectParamData data, GameObject rootGO, float scale)
         {
             if (data == null || data.ObjectDefinitions == null) return;
@@ -590,12 +713,12 @@ namespace SilentTools
                     hitbox.paramInt5 = entry.Hitbox.UnknownInt5;
                     hitbox.paramInt9 = entry.Hitbox.UnknownInt9;
 
-                    if (entry.Hitbox.HitboxShape == 2) // Box collider
+                    if (entry.Hitbox.HitboxShape == 2)
                     {
                         BoxCollider box = objGO.AddComponent<BoxCollider>();
                         box.size = new Vector3(entry.Hitbox.UnknownFloat2 * scale * 2f, entry.Hitbox.UnknownFloat3 * scale * 2f, entry.Hitbox.UnknownFloat4 * scale * 2f);
                     }
-                    else if (entry.Hitbox.HitboxShape == 1 || entry.Hitbox.HitboxShape == 0) // Sphere collider
+                    else if (entry.Hitbox.HitboxShape == 1 || entry.Hitbox.HitboxShape == 0)
                     {
                         SphereCollider sphere = objGO.AddComponent<SphereCollider>();
                         sphere.radius = entry.Hitbox.UnknownFloat6 * scale;
@@ -620,9 +743,7 @@ namespace SilentTools
                     for (int a = 0; a < entry.Animations.Count; a++)
                     {
                         var anim = entry.Animations[a];
-                        string aName = !string.IsNullOrEmpty(anim.BoneAnimName)
-                            ? anim.BoneAnimName
-                            : (!string.IsNullOrEmpty(anim.TexAnimName) ? anim.TexAnimName : $"Anim_{anim.UnknownIdentifier1}");
+                        string aName = !string.IsNullOrEmpty(anim.BoneAnimName) ? anim.BoneAnimName : (!string.IsNullOrEmpty(anim.TexAnimName) ? anim.TexAnimName : $"Anim_{anim.UnknownIdentifier1}");
                         GameObject aGO = new GameObject($"[{a:00}] {aName}");
                         aGO.transform.SetParent(animsContainer.transform, false);
                     }
@@ -664,48 +785,6 @@ namespace SilentTools
                 comp.particleFileName = entry.ParticleFileName;
                 comp.mysteryFloat = entry.MysteryFloat;
                 comp.mysteryInt = entry.MysteryInt;
-            }
-        }
-
-        private static void BuildSetLayoutHierarchy(SetFileData data, GameObject rootGO, float scale)
-        {
-            if (data == null || data.MapData == null) return;
-            foreach (var map in data.MapData)
-            {
-                GameObject mapGO = new GameObject($"Map_{map.MapNumber:00}");
-                mapGO.transform.SetParent(rootGO.transform, false);
-
-                for (int h = 0; h < map.Headers.Count; h++)
-                {
-                    var header = map.Headers[h];
-                    GameObject groupGO = new GameObject($"Group_{header.ListIndex:00}");
-                    groupGO.transform.SetParent(mapGO.transform, false);
-
-                    foreach (var obj in header.Objects)
-                    {
-                        string defName = SetObjectDefinitions.GetDefinitionName(obj.ObjID);
-                        GameObject objGO = new GameObject($"[Obj_{obj.ObjID:000}] {defName}");
-                        objGO.transform.SetParent(groupGO.transform, false);
-
-                        Vector3 pos = obj.Position;
-                        pos.x *= -1f * scale;
-                        pos.y *= scale;
-                        pos.z *= scale;
-
-                        objGO.transform.localPosition = pos;
-                        objGO.transform.localEulerAngles = new Vector3(-obj.Rotation.x, -obj.Rotation.y, -obj.Rotation.z);
-
-                        RelObjectMetadataComponent metaComp = objGO.AddComponent<RelObjectMetadataComponent>();
-                        metaComp.objID = obj.ObjID;
-                        metaComp.objectName = defName;
-                        metaComp.originalPosition = obj.Position;
-                        metaComp.originalRotation = obj.Rotation;
-                        metaComp.headerInt1 = obj.HeaderInt1;
-                        metaComp.headerInt2 = obj.HeaderInt2;
-                        metaComp.headerInt3 = obj.HeaderInt3;
-                        metaComp.metadata = obj.Metadata;
-                    }
-                }
             }
         }
 
@@ -817,6 +896,5 @@ namespace SilentTools
                 lGO.transform.forward = -lightData.Direction.normalized;
             return lGO;
         }
-        #endregion
     }
 }

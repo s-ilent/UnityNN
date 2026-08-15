@@ -1,3 +1,5 @@
+// File: Marathon/Rel/Parsers/FileListParser.cs
+using System;
 using System.Collections.Generic;
 using Marathon.IO;
 
@@ -9,23 +11,26 @@ namespace SilentTools
         {
             FileListData data = new FileListData();
             uint fileSize = (uint)reader.BaseStream.Length;
-            if (headerLoc + 64 > fileSize) return data;
+            if (headerLoc >= fileSize) return data;
+
+            int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
+            if (maxCategories <= 0) return data;
 
             reader.JumpTo(headerLoc);
-            uint[] topLevelPointers = new uint[16];
-            for (int i = 0; i < 16; i++)
+            uint[] topLevelPointers = new uint[maxCategories];
+            for (int i = 0; i < maxCategories; i++)
             {
                 if (reader.BaseStream.Position + 4 > fileSize) break;
-                topLevelPointers[i] = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+                topLevelPointers[i] = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, baseAddr);
             }
 
-            for (int i = 0; i < 16; i++)
+            for (int i = 0; i < maxCategories; i++)
             {
                 if (topLevelPointers[i] > 0 && topLevelPointers[i] + 8 <= fileSize)
                 {
                     reader.JumpTo(topLevelPointers[i]);
                     int currListSize = reader.ReadInt32();
-                    uint currListAddr = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+                    uint currListAddr = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, baseAddr);
 
                     if (currListSize > 0 && currListSize < 5000 && currListAddr > 0 && currListAddr + currListSize * 4 <= fileSize)
                     {
@@ -35,7 +40,7 @@ namespace SilentTools
                         reader.JumpTo(currListAddr);
                         for (int j = 0; j < currListSize; j++)
                         {
-                            stringLocs[j] = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, reader.Offset);
+                            stringLocs[j] = RelResolver.ResolveOffset(reader.ReadInt32(), fileSize, baseAddr);
                         }
 
                         for (int j = 0; j < currListSize; j++)
