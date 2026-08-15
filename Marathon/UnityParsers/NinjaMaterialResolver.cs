@@ -429,6 +429,32 @@ namespace SilentTools
             mat.SetFloat("_AlphaToMask", 0.0f);
             mat.SetFloat("_Unlit", 0.0f);
 
+            if ((rawFlags & 0x02) != 0)
+            {
+                mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+            }
+            else
+            {
+                mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Back);
+            }
+
+            // Bit 0x04: Disable Lighting (Unlit)
+            bool isUnlit = ((rawFlags & 0x04) != 0);
+            mat.SetFloat("_Unlit", isUnlit ? 1.0f : 0.0f);
+
+            // Bit 0x08: Disable Fog
+            if ((rawFlags & 0x08) != 0)
+            {
+                mat.SetFloat("_DisableFog", 1.0f);
+            }
+            else
+            {
+                mat.SetFloat("_DisableFog", 0.0f);
+            }
+            
+            // Bit 0x40000000 / 0x80000000: Specular Flag Check
+            bool hasSpecular = ((rawFlags & 0xC0000000U) != 0);
+
             // Import Material Colours
             if (matColour != null)
             {

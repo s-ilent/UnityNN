@@ -57,6 +57,8 @@ Shader "NinjaNext/Standard"
 
         // Lighting Mode
         [ToggleUI] _Unlit ("Unlit (Disable Lighting)", Float) = 0.0
+        [ToggleUI] _DisableFog ("Disable Fog", Float) = 0.0
+        
     }
 
     SubShader

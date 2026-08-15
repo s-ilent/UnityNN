@@ -16,6 +16,7 @@ sampler2D _MainTex;
 float4 _MainTex_ST;
 
 float _Unlit;
+float _DisableFog;
 float _AlphaTest;
 float _Cutoff;
 float _AlphaToMask;
@@ -338,6 +339,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     float3 finalColor;
 
     bool isUnlit = (_Unlit > 0.5);
+    bool noFog = (_DisableFog > 0.5);
     if (isUnlit)
     {
     
@@ -361,7 +363,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     };
     
     finalColor = material.baseColor.rgb * (ambient + diffuse) + specular + material.emissive;
-    if (!isUnlit) applyUnityFog(finalColor, fogDepth);
+    if (!noFog) applyUnityFog(finalColor, fogDepth);
     return half4(finalColor, material.baseColor.a);
 }
 

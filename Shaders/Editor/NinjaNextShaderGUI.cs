@@ -31,6 +31,7 @@ namespace SilentTools
         private MaterialProperty customRenderQueueProp;
 
         private MaterialProperty unlitProp;
+        private MaterialProperty disableFogProp;
 
         private MaterialProperty alphaTestProp;
         private MaterialProperty cutoffProp;
@@ -79,6 +80,7 @@ namespace SilentTools
             customRenderQueueProp = FindProperty("_CustomRenderQueue", props, false);
 
             unlitProp = FindProperty("_Unlit", props, false);
+            disableFogProp = FindProperty("_DisableFog", props, false);
 
             alphaTestProp = FindProperty("_AlphaTest", props, false);
             cutoffProp = FindProperty("_Cutoff", props, false);
@@ -234,6 +236,7 @@ namespace SilentTools
 
                 EditorGUI.indentLevel++;
                 if (unlitProp != null) materialEditor.ShaderProperty(unlitProp, "Unlit (Disable Lighting)");
+                if (disableFogProp != null) materialEditor.ShaderProperty(disableFogProp, "Disable Fog");
                 if (srcBlendProp != null) materialEditor.ShaderProperty(srcBlendProp, "Source Blend");
                 if (dstBlendProp != null) materialEditor.ShaderProperty(dstBlendProp, "Destination Blend");
                 if (blendOpProp != null) materialEditor.ShaderProperty(blendOpProp, "Blend Operation");
