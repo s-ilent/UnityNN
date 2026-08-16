@@ -1,6 +1,7 @@
 // File: Marathon/UnityParsers/NinjaMotionResolver.cs
 using UnityEngine;
 using UnityEditor;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using Marathon.Formats.Mesh.Ninja;
@@ -25,13 +26,13 @@ namespace SilentTools
         public static float Bams32ToDegrees(int bam32Angle) => (float)((double)bam32Angle * (360.0 / 65536.0));
         public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
 
-        private struct PropertyKey : System.IEquatable<PropertyKey>
+        private struct PropertyKey : IEquatable<PropertyKey>
         {
             public string TargetPath;
-            public System.Type ComponentType;
+            public Type ComponentType;
             public string PropertyName;
 
-            public PropertyKey(string targetPath, System.Type componentType, string propertyName)
+            public PropertyKey(string targetPath, Type componentType, string propertyName)
             {
                 TargetPath = targetPath ?? "";
                 ComponentType = componentType;
@@ -90,7 +91,7 @@ namespace SilentTools
             foreach (string ext in MotionExtensions)
             {
                 string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
-                if (candidatePath.Equals(assetPath.Replace('\\', '/'), System.StringComparison.OrdinalIgnoreCase)) continue;
+                if (candidatePath.Equals(assetPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)) continue;
 
                 if (File.Exists(candidatePath))
                 {
@@ -106,7 +107,7 @@ namespace SilentTools
                             break;
                         }
                     }
-                    catch (System.Exception ex)
+                    catch (Exception ex)
                     {
                         Debug.LogWarning($"Could not load linked node motion {candidatePath}:\n{ex}");
                     }
@@ -116,7 +117,7 @@ namespace SilentTools
             foreach (string ext in MaterialMotionExtensions)
             {
                 string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
-                if (candidatePath.Equals(assetPath.Replace('\\', '/'), System.StringComparison.OrdinalIgnoreCase)) continue;
+                if (candidatePath.Equals(assetPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)) continue;
 
                 if (File.Exists(candidatePath))
                 {
@@ -133,7 +134,7 @@ namespace SilentTools
                             break;
                         }
                     }
-                    catch (System.Exception ex)
+                    catch (Exception ex)
                     {
                         Debug.LogWarning($"Could not load linked material motion {candidatePath}:\n{ex}");
                     }
@@ -151,7 +152,7 @@ namespace SilentTools
             foreach (string ext in ModelExtensions)
             {
                 string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
-                if (candidatePath.Equals(assetPath.Replace('\\', '/'), System.StringComparison.OrdinalIgnoreCase)) continue;
+                if (candidatePath.Equals(assetPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)) continue;
 
                 if (File.Exists(candidatePath))
                 {
@@ -171,7 +172,7 @@ namespace SilentTools
                             return loader.Data.NodeNameList.NinjaNodeNames.ToArray();
                         }
                     }
-                    catch (System.Exception ex)
+                    catch (Exception ex)
                     {
                         Debug.LogWarning($"Could not resolve target nodes from {candidatePath}:\n{ex}");
                     }
@@ -213,7 +214,7 @@ namespace SilentTools
             float scale,
             GameObject rootGO,
             List<Transform> nodeTransforms = null,
-            MeshImportMode importMode = MeshImportMode.SingleSkinnedMesh)
+            MeshImportMode importMode = MeshImportMode.CombinedByNode)
         {
             if (motionData == null) return null;
 
@@ -237,7 +238,7 @@ namespace SilentTools
                 }
             }
 
-            return ResolveMotion(motionData, clipName, scale, nodeHierarchyPaths, importMode);
+            return ResolveMotionInternal(motionData, clipName, scale, nodeHierarchyPaths, nodeTransforms, importMode);
         }
 
         public static AnimationClip ResolveMotion(
@@ -245,13 +246,25 @@ namespace SilentTools
             string clipName,
             float scale,
             string[] nodeHierarchyTargets,
-            MeshImportMode importMode = MeshImportMode.SingleSkinnedMesh)
+            MeshImportMode importMode = MeshImportMode.CombinedByNode)
+        {
+            return ResolveMotionInternal(motionData, clipName, scale, nodeHierarchyTargets, null, importMode);
+        }
+
+        private static AnimationClip ResolveMotionInternal(
+            NinjaMotion motionData,
+            string clipName,
+            float scale,
+            string[] nodeHierarchyTargets,
+            List<Transform> nodeTransforms,
+            MeshImportMode importMode)
         {
             if (motionData == null) return null;
 
             var clip = new AnimationClip { name = clipName };
             float framerate = motionData.Framerate <= 0 ? 60.0f : motionData.Framerate;
             float timeScale = 60.0f / framerate;
+            float maxClipTime = (motionData.EndFrame / 60.0f) * timeScale;
 
             if (nodeHierarchyTargets == null) nodeHierarchyTargets = new string[0];
 
@@ -268,7 +281,7 @@ namespace SilentTools
                     targetPath = nodeHierarchyTargets[subMotion.NodeIndex];
                 }
 
-                // If this is a material motion in SingleSkinnedMesh mode, the Renderer lives on the root GameObject ("")
+                // In SingleSkinnedMesh mode, material animations target the root renderer
                 bool isMaterialMotion = (motionData.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
                 if (isMaterialMotion && importMode == MeshImportMode.SingleSkinnedMesh)
                 {
@@ -277,6 +290,9 @@ namespace SilentTools
 
                 CollectSubMotionSegments(subMotion, targetPath, propertySegments, timeScale, scale, motionData.Type);
             }
+
+            // Fill un-animated companion channels with constant rest-pose values so Unity does not zero them out
+            FillMissingTransformChannels(propertySegments, nodeTransforms, nodeHierarchyTargets, maxClipTime);
 
             foreach (var kvp in propertySegments)
             {
@@ -304,6 +320,115 @@ namespace SilentTools
             AnimationUtility.SetAnimationClipSettings(clip, clipSettings);
 
             return clip;
+        }
+
+        private static void FillMissingTransformChannels(
+            Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments,
+            List<Transform> nodeTransforms,
+            string[] nodeHierarchyTargets,
+            float maxTime)
+        {
+            HashSet<string> targetPaths = new HashSet<string>();
+            foreach (var key in propertySegments.Keys)
+            {
+                if (key.ComponentType == typeof(Transform))
+                {
+                    targetPaths.Add(key.TargetPath);
+                }
+            }
+
+            foreach (string path in targetPaths)
+            {
+                Transform nodeTr = FindNodeTransformByPath(path, nodeTransforms, nodeHierarchyTargets);
+
+                Vector3 restPos = nodeTr != null ? nodeTr.localPosition : Vector3.zero;
+                Vector3 restRot = nodeTr != null ? nodeTr.localEulerAngles : Vector3.zero;
+                Vector3 restScale = nodeTr != null ? nodeTr.localScale : Vector3.one;
+
+                // 1. Position Channels
+                PropertyKey posXKey = new PropertyKey(path, typeof(Transform), "localPosition.x");
+                PropertyKey posYKey = new PropertyKey(path, typeof(Transform), "localPosition.y");
+                PropertyKey posZKey = new PropertyKey(path, typeof(Transform), "localPosition.z");
+
+                bool hasPosX = propertySegments.ContainsKey(posXKey);
+                bool hasPosY = propertySegments.ContainsKey(posYKey);
+                bool hasPosZ = propertySegments.ContainsKey(posZKey);
+
+                if (hasPosX || hasPosY || hasPosZ)
+                {
+                    if (!hasPosX) AddConstantChannel(propertySegments, posXKey, restPos.x, maxTime);
+                    if (!hasPosY) AddConstantChannel(propertySegments, posYKey, restPos.y, maxTime);
+                    if (!hasPosZ) AddConstantChannel(propertySegments, posZKey, restPos.z, maxTime);
+                }
+
+                // 2. Rotation Channels
+                PropertyKey rotXKey = new PropertyKey(path, typeof(Transform), "localEulerAnglesRaw.x");
+                PropertyKey rotYKey = new PropertyKey(path, typeof(Transform), "localEulerAnglesRaw.y");
+                PropertyKey rotZKey = new PropertyKey(path, typeof(Transform), "localEulerAnglesRaw.z");
+
+                bool hasRotX = propertySegments.ContainsKey(rotXKey);
+                bool hasRotY = propertySegments.ContainsKey(rotYKey);
+                bool hasRotZ = propertySegments.ContainsKey(rotZKey);
+
+                if (hasRotX || hasRotY || hasRotZ)
+                {
+                    if (!hasRotX) AddConstantChannel(propertySegments, rotXKey, restRot.x, maxTime);
+                    if (!hasRotY) AddConstantChannel(propertySegments, rotYKey, restRot.y, maxTime);
+                    if (!hasRotZ) AddConstantChannel(propertySegments, rotZKey, restRot.z, maxTime);
+                }
+
+                // 3. Scaling Channels
+                PropertyKey sclXKey = new PropertyKey(path, typeof(Transform), "localScale.x");
+                PropertyKey sclYKey = new PropertyKey(path, typeof(Transform), "localScale.y");
+                PropertyKey sclZKey = new PropertyKey(path, typeof(Transform), "localScale.z");
+
+                bool hasSclX = propertySegments.ContainsKey(sclXKey);
+                bool hasSclY = propertySegments.ContainsKey(sclYKey);
+                bool hasSclZ = propertySegments.ContainsKey(sclZKey);
+
+                if (hasSclX || hasSclY || hasSclZ)
+                {
+                    if (!hasSclX) AddConstantChannel(propertySegments, sclXKey, restScale.x, maxTime);
+                    if (!hasSclY) AddConstantChannel(propertySegments, sclYKey, restScale.y, maxTime);
+                    if (!hasSclZ) AddConstantChannel(propertySegments, sclZKey, restScale.z, maxTime);
+                }
+            }
+        }
+
+        private static void AddConstantChannel(
+            Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments,
+            PropertyKey key,
+            float constantValue,
+            float maxTime)
+        {
+            var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT };
+            seg.Keyframes.Add(new Keyframe(0f, constantValue, float.PositiveInfinity, float.PositiveInfinity));
+            if (maxTime > 0.001f)
+            {
+                seg.Keyframes.Add(new Keyframe(maxTime, constantValue, float.PositiveInfinity, float.PositiveInfinity));
+            }
+
+            propertySegments[key] = new List<SubMotionSegment> { seg };
+        }
+
+        private static Transform FindNodeTransformByPath(string path, List<Transform> nodeTransforms, string[] nodeHierarchyTargets)
+        {
+            if (nodeTransforms == null || nodeTransforms.Count == 0) return null;
+
+            for (int i = 0; i < nodeTransforms.Count; i++)
+            {
+                if (i < nodeHierarchyTargets.Length && nodeHierarchyTargets[i] == path)
+                {
+                    return nodeTransforms[i];
+                }
+            }
+
+            foreach (var tr in nodeTransforms)
+            {
+                if (tr != null && tr.name == path) return tr;
+            }
+
+            return null;
         }
 
         private static string GetTransformPath(Transform transform, Transform root)
@@ -359,26 +484,42 @@ namespace SilentTools
                              || (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
             bool isMaterialMotion = (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
 
+            uint smTypeFlags = (uint)subMotion.Type;
+
+            // 1. Vector Keyframes (3-axis Translation / Scaling / Colors)
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_VECTOR)
             {
-                bool isTrans = isNodeMotion && (subMotion.Type & SubMotionType.NND_SMOTTYPE_TRANSLATION_MASK) != 0;
-                bool isScale = isNodeMotion && (subMotion.Type & SubMotionType.NND_SMOTTYPE_SCALING_MASK) != 0;
+                bool hasTransX = isNodeMotion && (smTypeFlags & 0x100U) != 0;
+                bool hasTransY = isNodeMotion && (smTypeFlags & 0x200U) != 0;
+                bool hasTransZ = isNodeMotion && (smTypeFlags & 0x400U) != 0;
 
-                string prefix = isTrans ? "localPosition" : (isScale ? "localScale" : "");
+                bool hasScaleX = isNodeMotion && (smTypeFlags & 0x8000U) != 0;
+                bool hasScaleY = isNodeMotion && (smTypeFlags & 0x10000U) != 0;
+                bool hasScaleZ = isNodeMotion && (smTypeFlags & 0x20000U) != 0;
 
-                PropertyKey keyX, keyY, keyZ;
-                if (isNodeMotion)
+                bool hasDiffR = isMaterialMotion && (smTypeFlags & 0x200U) != 0;
+                bool hasDiffG = isMaterialMotion && (smTypeFlags & 0x400U) != 0;
+                bool hasDiffB = isMaterialMotion && (smTypeFlags & 0x800U) != 0;
+
+                PropertyKey keyX = default, keyY = default, keyZ = default;
+
+                if (hasTransX || hasTransY || hasTransZ)
                 {
-                    if (string.IsNullOrEmpty(prefix)) prefix = "localPosition";
-                    keyX = new PropertyKey(targetPath, typeof(Transform), $"{prefix}.x");
-                    keyY = new PropertyKey(targetPath, typeof(Transform), $"{prefix}.y");
-                    keyZ = new PropertyKey(targetPath, typeof(Transform), $"{prefix}.z");
+                    if (hasTransX) keyX = new PropertyKey(targetPath, typeof(Transform), "localPosition.x");
+                    if (hasTransY) keyY = new PropertyKey(targetPath, typeof(Transform), "localPosition.y");
+                    if (hasTransZ) keyZ = new PropertyKey(targetPath, typeof(Transform), "localPosition.z");
                 }
-                else
+                else if (hasScaleX || hasScaleY || hasScaleZ)
                 {
-                    keyX = new PropertyKey(targetPath, typeof(Renderer), "material._Color.r");
-                    keyY = new PropertyKey(targetPath, typeof(Renderer), "material._Color.g");
-                    keyZ = new PropertyKey(targetPath, typeof(Renderer), "material._Color.b");
+                    if (hasScaleX) keyX = new PropertyKey(targetPath, typeof(Transform), "localScale.x");
+                    if (hasScaleY) keyY = new PropertyKey(targetPath, typeof(Transform), "localScale.y");
+                    if (hasScaleZ) keyZ = new PropertyKey(targetPath, typeof(Transform), "localScale.z");
+                }
+                else if (hasDiffR || hasDiffG || hasDiffB)
+                {
+                    if (hasDiffR) keyX = new PropertyKey(targetPath, typeof(Renderer), "material._Color.r");
+                    if (hasDiffG) keyY = new PropertyKey(targetPath, typeof(Renderer), "material._Color.g");
+                    if (hasDiffB) keyZ = new PropertyKey(targetPath, typeof(Renderer), "material._Color.b");
                 }
 
                 foreach (var objKf in subMotion.Keyframes)
@@ -387,68 +528,70 @@ namespace SilentTools
                     float time = (kf.Frame / 60.0f) * timeScale;
                     Vector3 val = kf.Value;
 
-                    if (isTrans)
+                    if (hasTransX || hasTransY || hasTransZ)
                     {
                         val.x *= -1f * scale;
                         val.y *= scale;
                         val.z *= scale;
                     }
 
-                    AddKeyframeToSegment(propertySegments, keyX, subMotion.InterpolationType, new Keyframe(time, val.x));
-                    AddKeyframeToSegment(propertySegments, keyY, subMotion.InterpolationType, new Keyframe(time, val.y));
-                    AddKeyframeToSegment(propertySegments, keyZ, subMotion.InterpolationType, new Keyframe(time, val.z));
+                    if (hasTransX || hasScaleX || hasDiffR) AddKeyframeToSegment(propertySegments, keyX, subMotion.InterpolationType, new Keyframe(time, val.x));
+                    if (hasTransY || hasScaleY || hasDiffG) AddKeyframeToSegment(propertySegments, keyY, subMotion.InterpolationType, new Keyframe(time, val.y));
+                    if (hasTransZ || hasScaleZ || hasDiffB) AddKeyframeToSegment(propertySegments, keyZ, subMotion.InterpolationType, new Keyframe(time, val.z));
                 }
                 return;
             }
 
+            // 2. 3-Axis BAMS Rotation Keyframes
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)
             {
-                PropertyKey keyX = new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x");
-                PropertyKey keyY = new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y");
-                PropertyKey keyZ = new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z");
+                bool hasRotX = (smTypeFlags & 0x800U) != 0;
+                bool hasRotY = (smTypeFlags & 0x1000U) != 0;
+                bool hasRotZ = (smTypeFlags & 0x2000U) != 0;
+
+                PropertyKey keyX = hasRotX ? new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x") : default;
+                PropertyKey keyY = hasRotY ? new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y") : default;
+                PropertyKey keyZ = hasRotZ ? new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z") : default;
 
                 foreach (var objKf in subMotion.Keyframes)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)objKf;
                     float time = (kf.Frame / 60.0f) * timeScale;
 
-                    float rawX = BamsToDegrees(kf.Value1);
-                    float rawY = -BamsToDegrees(kf.Value2);
-                    float rawZ = -BamsToDegrees(kf.Value3);
-
-                    AddKeyframeToSegment(propertySegments, keyX, subMotion.InterpolationType, new Keyframe(time, rawX));
-                    AddKeyframeToSegment(propertySegments, keyY, subMotion.InterpolationType, new Keyframe(time, rawY));
-                    AddKeyframeToSegment(propertySegments, keyZ, subMotion.InterpolationType, new Keyframe(time, rawZ));
+                    if (hasRotX) AddKeyframeToSegment(propertySegments, keyX, subMotion.InterpolationType, new Keyframe(time, BamsToDegrees(kf.Value1)));
+                    if (hasRotY) AddKeyframeToSegment(propertySegments, keyY, subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value2)));
+                    if (hasRotZ) AddKeyframeToSegment(propertySegments, keyZ, subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value3)));
                 }
                 return;
             }
 
+            // 3. Scalar Keyframes (Float, Sint32, Sint16)
             List<PropertyKey> targetKeys = GetTargetPropertyKeys(subMotion.Type, parentMotionType, targetPath);
             if (targetKeys == null || targetKeys.Count == 0) return;
 
             foreach (var kf in subMotion.Keyframes)
             {
-                float time = 0f, rawVal = 0f;
+                float time = 0f, scalarVal = 0f;
 
                 if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32Kf)
                 {
                     time = (s32Kf.Frame / 60.0f) * timeScale;
-                    rawVal = ((subMotion.Type & SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32) != 0) ? Bams32ToDegrees(s32Kf.Value) : s32Kf.Value;
+                    scalarVal = ((subMotion.Type & SubMotionType.NND_SMOTTYPE_ANGLE_ANGLE32) != 0) ? Bams32ToDegrees(s32Kf.Value) : s32Kf.Value;
                 }
                 else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT fKf)
                 {
                     time = (fKf.Frame / 60.0f) * timeScale;
-                    rawVal = ((subMotion.Type & SubMotionType.NND_SMOTTYPE_ANGLE_RADIAN) != 0) ? RadiansToDegrees(fKf.Value) : fKf.Value;
+                    scalarVal = ((subMotion.Type & SubMotionType.NND_SMOTTYPE_ANGLE_RADIAN) != 0) ? RadiansToDegrees(fKf.Value) : fKf.Value;
                 }
                 else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16Kf)
                 {
                     time = (s16Kf.Frame / 60.0f) * timeScale;
-                    rawVal = BamsToDegrees(s16Kf.Value);
+                    scalarVal = BamsToDegrees(s16Kf.Value);
                 }
 
                 foreach (PropertyKey key in targetKeys)
                 {
-                    float val = rawVal;
+                    float val = scalarVal;
                     if (key.PropertyName.Contains("Position")) val *= scale;
                     if (key.PropertyName.Contains("localPosition.x") || key.PropertyName.Contains("localEulerAnglesRaw.y") || key.PropertyName.Contains("localEulerAnglesRaw.z")) val *= -1f;
 
@@ -465,71 +608,36 @@ namespace SilentTools
                              || (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
             bool isMaterialMotion = (parentMotionType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
 
+            uint rawVal = (uint)subType;
+
             if (isNodeMotion)
             {
-                uint rawVal = (uint)subType;
+                // Translation Channels
+                if ((rawVal & 0x100U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.x"));
+                if ((rawVal & 0x200U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.y"));
+                if ((rawVal & 0x400U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.z"));
 
-                // Check Translation Channels
-                uint trans = rawVal & 0x700U;
-                if (trans == 0x100U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.x"));
-                else if (trans == 0x200U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.y"));
-                else if (trans == 0x400U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.z"));
-                else if (trans == 0x700U)
-                {
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.x"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.y"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localPosition.z"));
-                }
+                // Rotation Channels
+                if ((rawVal & 0x800U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"));
+                if ((rawVal & 0x1000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"));
+                if ((rawVal & 0x2000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"));
 
-                // Check Rotation Channels
-                uint rot = rawVal & 0x7800U;
-                if (rot == 0x800U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"));
-                else if (rot == 0x1000U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"));
-                else if (rot == 0x2000U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"));
-                else if (rot == 0x3800U)
-                {
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"));
-                }
-
-                // Check Scaling Channels
-                uint scl = rawVal & 0x38000U;
-                if (scl == 0x8000U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.x"));
-                else if (scl == 0x10000U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.y"));
-                else if (scl == 0x20000U) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.z"));
-                else if (scl == 0x38000U)
-                {
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.x"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.y"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.z"));
-                }
+                // Scaling Channels
+                if ((rawVal & 0x8000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.x"));
+                if ((rawVal & 0x10000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.y"));
+                if ((rawVal & 0x20000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Transform), "localScale.z"));
             }
             else if (isMaterialMotion)
             {
-                uint rawVal = (uint)subType;
-
-                uint diff = rawVal & 0xE00U;
-                if (diff == 0x200U) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.r"));
-                else if (diff == 0x400U) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.g"));
-                else if (diff == 0x800U) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.b"));
-                else if (diff == 0xE00U)
-                {
-                    keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.r"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.g"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.b"));
-                }
-
+                // Material Diffuse Color Channels
+                if ((rawVal & 0x200U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.r"));
+                if ((rawVal & 0x400U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.g"));
+                if ((rawVal & 0x800U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.b"));
                 if ((rawVal & 0x1000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._Color.a"));
 
-                uint uv = rawVal & 0x1800000U;
-                if (uv == 0x800000U) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._MainTex_ST.z"));
-                else if (uv == 0x1000000U) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._MainTex_ST.w"));
-                else if (uv == 0x1800000U)
-                {
-                    keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._MainTex_ST.z"));
-                    keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._MainTex_ST.w"));
-                }
+                // Material UV Offset Channels
+                if ((rawVal & 0x800000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._MainTex_ST.z"));
+                if ((rawVal & 0x1000000U) != 0) keys.Add(new PropertyKey(targetPath, typeof(Renderer), "material._MainTex_ST.w"));
             }
 
             return keys;
@@ -607,21 +715,6 @@ namespace SilentTools
             }
 
             AnimationCurve curve = new AnimationCurve(uniqueKfs.ToArray());
-
-            for (int i = 0; i < curve.keys.Length; i++)
-            {
-                Keyframe kf = curve.keys[i];
-                if (float.IsInfinity(kf.inTangent) || float.IsInfinity(kf.outTangent))
-                {
-                    AnimationUtility.SetKeyLeftTangentMode(curve, i, AnimationUtility.TangentMode.Constant);
-                    AnimationUtility.SetKeyRightTangentMode(curve, i, AnimationUtility.TangentMode.Constant);
-                }
-                else
-                {
-                    AnimationUtility.SetKeyLeftTangentMode(curve, i, AnimationUtility.TangentMode.Linear);
-                    AnimationUtility.SetKeyRightTangentMode(curve, i, AnimationUtility.TangentMode.Linear);
-                }
-            }
 
             SubMotionInterpolationType firstInterp = segments[0].InterpolationType;
             WrapMode mode = WrapMode.Default;
