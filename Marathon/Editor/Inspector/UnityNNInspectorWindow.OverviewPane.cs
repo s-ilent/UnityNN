@@ -1,3 +1,4 @@
+// File: Marathon/Editor/Inspector/UnityNNInspectorWindow.OverviewPane.cs
 using UnityEngine;
 using UnityEditor;
 using System.IO;
@@ -175,11 +176,35 @@ namespace SilentTools.Editor
                 var data = m_Context.NinjaData.Data;
                 switch (m_SelectedTab)
                 {
-                    case 0: DumpCategoryJson(data.Object?.Nodes); break;
-                    case 1: DumpCategoryJson(data.Object?.SubObjects); break;
-                    case 2: DumpCategoryJson(data.Object?.Materials); break;
-                    case 3: DumpCategoryJson(data.Motion); break;
-                    case 4: DumpCategoryJson(data.Camera); break;
+                    case 0: 
+                        DumpCategoryJson(data.Object?.Nodes); 
+                        break;
+                    case 1: 
+                        DumpCategoryJson(data.Object != null ? (object)data.Object.SubObjects : null); 
+                        break;
+                    case 2: 
+                        if (data.Object?.Materials != null && data.Object.Materials.Count > 0)
+                            DumpCategoryJson(data.Object.Materials);
+                        else if (data.TextureList != null)
+                            DumpCategoryJson(data.TextureList.NinjaTextureFiles);
+                        else
+                            DumpCategoryJson(null);
+                        break;
+                    case 3: 
+                        if (data.Motion != null && data.MaterialMotion != null)
+                            DumpCategoryJson(new Dictionary<string, object> { { "NodeMotion", data.Motion }, { "MaterialMotion", data.MaterialMotion } });
+                        else if (data.MaterialMotion != null)
+                            DumpCategoryJson(data.MaterialMotion);
+                        else
+                            DumpCategoryJson(data.Motion);
+                        break;
+                    case 4: 
+                        if (data.Camera != null) DumpCategoryJson(data.Camera);
+                        else if (data.Light != null) DumpCategoryJson(data.Light);
+                        else if (data.EffectList != null) DumpCategoryJson(data.EffectList);
+                        else if (data.NodeNameList != null) DumpCategoryJson(data.NodeNameList.NinjaNodeNames);
+                        else DumpCategoryJson(null);
+                        break;
                 }
             }
             else if (m_Context.IsRelAsset)

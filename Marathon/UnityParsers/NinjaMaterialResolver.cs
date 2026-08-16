@@ -1,3 +1,4 @@
+// File: Marathon/UnityParsers/NinjaMaterialResolver.cs
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -183,8 +184,7 @@ namespace SilentTools
             if (offset == 0 || objData.MaterialColours == null) return null;
             for (int i = 0; i < objData.MaterialColours.Count; i++)
             {
-                if (objData.MaterialColours[i].Offset == offset)
-                    return objData.MaterialColours[i];
+                if (objData.MaterialColours[i].Offset == offset) return objData.MaterialColours[i];
             }
             return null;
         }
@@ -194,8 +194,7 @@ namespace SilentTools
             if (offset == 0 || objData.MaterialLogics == null) return null;
             for (int i = 0; i < objData.MaterialLogics.Count; i++)
             {
-                if (objData.MaterialLogics[i].Offset == offset)
-                    return objData.MaterialLogics[i];
+                if (objData.MaterialLogics[i].Offset == offset) return objData.MaterialLogics[i];
             }
             return null;
         }
@@ -205,8 +204,7 @@ namespace SilentTools
             if (offset == 0 || objData.TextureMaps == null) return null;
             for (int i = 0; i < objData.TextureMaps.Count; i++)
             {
-                if (objData.TextureMaps[i].Offset == offset)
-                    return objData.TextureMaps[i];
+                if (objData.TextureMaps[i].Offset == offset) return objData.TextureMaps[i];
             }
             return null;
         }
@@ -247,10 +245,8 @@ namespace SilentTools
         {
             switch (ninjaBlend)
             {
-                case Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_SRCALPHA:
-                    return UnityEngine.Rendering.BlendMode.SrcAlpha;
-                case Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_INVSRCALPHA:
-                    return UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha;
+                case Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_SRCALPHA: return UnityEngine.Rendering.BlendMode.SrcAlpha;
+                case Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_INVSRCALPHA: return UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha;
                 default:
                     uint val = (uint)ninjaBlend;
                     switch (val)
@@ -281,8 +277,7 @@ namespace SilentTools
         {
             switch (ninjaOp)
             {
-                case Marathon.Formats.Mesh.Ninja.BlendOperation.NNE_BLENDOP_ADD:
-                    return UnityEngine.Rendering.BlendOp.Add;
+                case Marathon.Formats.Mesh.Ninja.BlendOperation.NNE_BLENDOP_ADD: return UnityEngine.Rendering.BlendOp.Add;
                 default:
                     uint val = (uint)ninjaOp;
                     switch (val)
@@ -305,22 +300,14 @@ namespace SilentTools
         {
             switch (func)
             {
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NEVER:
-                    return UnityEngine.Rendering.CompareFunction.Never;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESS:
-                    return UnityEngine.Rendering.CompareFunction.Less;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_EQUAL:
-                    return UnityEngine.Rendering.CompareFunction.Equal;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESSEQUAL:
-                    return UnityEngine.Rendering.CompareFunction.LessEqual;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATER:
-                    return UnityEngine.Rendering.CompareFunction.Greater;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NOTEQUAL:
-                    return UnityEngine.Rendering.CompareFunction.NotEqual;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATEREQUAL:
-                    return UnityEngine.Rendering.CompareFunction.GreaterEqual;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_ALWAYS:
-                    return UnityEngine.Rendering.CompareFunction.Always;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NEVER: return UnityEngine.Rendering.CompareFunction.Never;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESS: return UnityEngine.Rendering.CompareFunction.Less;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_EQUAL: return UnityEngine.Rendering.CompareFunction.Equal;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESSEQUAL: return UnityEngine.Rendering.CompareFunction.LessEqual;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATER: return UnityEngine.Rendering.CompareFunction.Greater;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NOTEQUAL: return UnityEngine.Rendering.CompareFunction.NotEqual;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATEREQUAL: return UnityEngine.Rendering.CompareFunction.GreaterEqual;
+                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_ALWAYS: return UnityEngine.Rendering.CompareFunction.Always;
                 default:
                     uint val = (uint)func;
                     switch (val)
@@ -414,7 +401,6 @@ namespace SilentTools
             uint rawFlags = nMat != null ? (uint)nMat.Flag : 0;
             uint rawType = nMat != null ? (uint)nMat.Type : 0;
 
-            // Send raw Sega NN metadata to Material Properties
             if (nMat != null)
             {
                 mat.SetFloat("_MaterialFlags", (float)rawFlags);
@@ -422,40 +408,21 @@ namespace SilentTools
                 mat.SetFloat("_UserDefined", (float)nMat.UserDefined);
             }
 
-            // Default property initializations
             mat.SetFloat("_EmissionPower", 1.0f);
             mat.SetFloat("_HDRIntensity", 1.0f);
             mat.SetFloat("_VertexColorScale", 1.0f);
             mat.SetFloat("_AlphaToMask", 0.0f);
             mat.SetFloat("_Unlit", 0.0f);
 
-            if ((rawFlags & 0x02) != 0)
-            {
-                mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-            }
-            else
-            {
-                mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Back);
-            }
+            if ((rawFlags & 0x02) != 0) mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+            else mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Back);
 
-            // Bit 0x04: Disable Lighting (Unlit)
             bool isUnlit = ((rawFlags & 0x04) != 0);
             mat.SetFloat("_Unlit", isUnlit ? 1.0f : 0.0f);
 
-            // Bit 0x08: Disable Fog
-            if ((rawFlags & 0x08) != 0)
-            {
-                mat.SetFloat("_DisableFog", 1.0f);
-            }
-            else
-            {
-                mat.SetFloat("_DisableFog", 0.0f);
-            }
-            
-            // Bit 0x40000000 / 0x80000000: Specular Flag Check
-            bool hasSpecular = ((rawFlags & 0xC0000000U) != 0);
+            if ((rawFlags & 0x08) != 0) mat.SetFloat("_DisableFog", 1.0f);
+            else mat.SetFloat("_DisableFog", 0.0f);
 
-            // Import Material Colours
             if (matColour != null)
             {
                 mat.SetColor("_Color", matColour.Diffuse);
@@ -465,7 +432,6 @@ namespace SilentTools
                 mat.SetFloat("_Shininess", Mathf.Clamp01(matColour.Power / 100.0f));
             }
 
-            // Evaluate Multi-Texture Blending from nMat.Flag bits
             if (texMap != null && texMap.NinjaTextureMapDescriptions != null && texList != null && texList.NinjaTextureFiles != null)
             {
                 for (int d = 0; d < texMap.NinjaTextureMapDescriptions.Count; d++)
@@ -496,12 +462,8 @@ namespace SilentTools
                             else if (d == 1)
                             {
                                 mat.SetTexture("_MainTex2", tex);
-
-                                // Bit 0x20: Terrain Decal Lerp (SceneC1T2_Desert.msasm)
-                                if ((rawFlags & 0x20) != 0)
-                                    mat.SetFloat("_MainTex2BlendMode", 2.0f); // Decal Lerp
-                                else
-                                    mat.SetFloat("_MainTex2BlendMode", 7.0f); // Inverted Alpha Modulate (SceneC1T2.msasm)
+                                if ((rawFlags & 0x20) != 0) mat.SetFloat("_MainTex2BlendMode", 2.0f);
+                                else mat.SetFloat("_MainTex2BlendMode", 7.0f);
                             }
                             else if (d == 2)
                             {
@@ -526,7 +488,6 @@ namespace SilentTools
                 }
             }
 
-            // Material Logic (Pipeline State, Blending, ZWrite, Alpha Cutout)
             if (matLogic != null)
             {
                 UnityEngine.Rendering.BlendMode srcBlend = MapNinjaBlendMode(matLogic.SRCBlend, UnityEngine.Rendering.BlendMode.One);
@@ -550,12 +511,8 @@ namespace SilentTools
                     mat.SetFloat("_AlphaTest", 0.0f);
                 }
 
-                // Bit 0x08/0x10 or Additive Blending marks material as Unlit Additive Pass (SceneC2T1Add.msasm)
                 bool isAdditiveGlow = ((rawFlags & 0x18) != 0) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.One);
-                if (isAdditiveGlow)
-                {
-                    mat.SetFloat("_Unlit", 1.0f);
-                }
+                if (isAdditiveGlow) mat.SetFloat("_Unlit", 1.0f);
 
                 bool isZWriteOn = matLogic.ZUpdate;
                 bool isAlphaTest = matLogic.Alpha && matLogic.AlphaRef > 0;
@@ -565,7 +522,7 @@ namespace SilentTools
                 {
                     if (isAlphaTest)
                     {
-                        mat.SetFloat("_Mode", 1.0f); // Cutout
+                        mat.SetFloat("_Mode", 1.0f);
                         mat.SetOverrideTag("RenderType", "TransparentCutout");
                         mat.SetOverrideTag("Queue", "AlphaTest");
                         mat.SetOverrideTag("IgnoreProjector", "True");
@@ -576,7 +533,7 @@ namespace SilentTools
                     }
                     else
                     {
-                        mat.SetFloat("_Mode", 0.0f); // Opaque
+                        mat.SetFloat("_Mode", 0.0f);
                         mat.SetOverrideTag("RenderType", "Opaque");
                         mat.SetOverrideTag("Queue", "Geometry");
                         mat.SetOverrideTag("IgnoreProjector", "False");
@@ -597,17 +554,17 @@ namespace SilentTools
                     mat.SetShaderPassEnabled("DepthOnly", false);
 
                     if (srcBlend == UnityEngine.Rendering.BlendMode.SrcAlpha && dstBlend == UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 2.0f); // Transparent
+                        mat.SetFloat("_Mode", 2.0f);
                     else if (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 3.0f); // Fade
+                        mat.SetFloat("_Mode", 3.0f);
                     else if (dstBlend == UnityEngine.Rendering.BlendMode.One && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 4.0f); // Additive
+                        mat.SetFloat("_Mode", 4.0f);
                     else if (srcBlend == UnityEngine.Rendering.BlendMode.DstColor && dstBlend == UnityEngine.Rendering.BlendMode.Zero && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 5.0f); // Multiply
+                        mat.SetFloat("_Mode", 5.0f);
                     else if (blendOp == UnityEngine.Rendering.BlendOp.ReverseSubtract)
-                        mat.SetFloat("_Mode", 6.0f); // ReverseSubtract
+                        mat.SetFloat("_Mode", 6.0f);
                     else
-                        mat.SetFloat("_Mode", 7.0f); // Custom
+                        mat.SetFloat("_Mode", 7.0f);
                 }
             }
 
@@ -770,15 +727,15 @@ namespace SilentTools
 
             string relativeFolder = "Assets" + destinationFolder.Substring(Application.dataPath.Length);
 
-            Object[] subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+            UnityEngine.Object[] subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
             int count = 0;
 
-            foreach (Object subAsset in subAssets)
+            foreach (UnityEngine.Object subAsset in subAssets)
             {
                 if (subAsset is Material mat)
                 {
                     string targetPath = $"{relativeFolder}/{mat.name}.mat";
-                    Material newMat = Object.Instantiate(mat);
+                    Material newMat = UnityEngine.Object.Instantiate(mat);
                     AssetDatabase.CreateAsset(newMat, targetPath);
                     count++;
                 }

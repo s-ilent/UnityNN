@@ -336,7 +336,6 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     bool noFog = (_DisableFog > 0.5);
     if (isUnlit)
     {
-    
         if (isForwardAdd)
         {
             return half4(0, 0, 0, material.baseColor.a);
