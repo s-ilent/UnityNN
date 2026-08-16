@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿// File: Marathon/Ninja/NinjaNode.cs
+using UnityEngine;
 using System.Collections.Generic;
 using Marathon.IO;
 
@@ -27,6 +28,9 @@ namespace Marathon.Formats.Mesh.Ninja
 
         public Vector3 Translation { get; set; }
 
+        /// <summary>
+        /// Euler rotation angles stored in degrees (converted from 32-bit BAMS).
+        /// </summary>
         public Vector3 Rotation { get; set; }
 
         public Vector3 Scaling { get; set; }
@@ -55,7 +59,17 @@ namespace Marathon.Formats.Mesh.Ninja
             ChildIndex = reader.ReadInt16();
             SiblingIndex = reader.ReadInt16();
             Translation = reader.ReadVector3();
-            Rotation = reader.ReadVector3();
+
+            // Sega NN NNS_NODE stores Rotation as 3 x s32 BAMS angles (65536 = 360 deg)
+            int rx = reader.ReadInt32();
+            int ry = reader.ReadInt32();
+            int rz = reader.ReadInt32();
+            Rotation = new Vector3(
+                rx * (360.0f / 65536.0f),
+                ry * (360.0f / 65536.0f),
+                rz * (360.0f / 65536.0f)
+            );
+
             Scaling = reader.ReadVector3();
             InvInitMatrix = reader.ReadMatrix();
             Center = reader.ReadVector3();
@@ -63,27 +77,5 @@ namespace Marathon.Formats.Mesh.Ninja
             UserDefined = reader.ReadUInt32();
             BoundingBox = reader.ReadVector3();
         }
-/*
-        /// <summary>
-        /// Writes this Ninja Object Node to a file.
-        /// </summary>
-        /// <param name="writer">The binary writer for this SegaNN file.</param>
-        public void Write(BinaryWriterEx writer)
-        {
-            writer.Write((uint)Type);
-            writer.Write(MatrixIndex);
-            writer.Write(ParentIndex);
-            writer.Write(ChildIndex);
-            writer.Write(SiblingIndex);
-            writer.Write(Translation);
-            writer.Write(Rotation);
-            writer.Write(Scaling);
-            writer.Write(InvInitMatrix);
-            writer.Write(Center);
-            writer.Write(Radius);
-            writer.Write(UserDefined);
-            writer.Write(BoundingBox);
-        }
-*/
     }
 }

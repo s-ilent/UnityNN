@@ -1,4 +1,4 @@
-// File: Marathon/NinjaMotionResolver.cs
+// File: Marathon/UnityParsers/NinjaMotionResolver.cs
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -212,7 +212,8 @@ namespace SilentTools
             string clipName,
             float scale,
             GameObject rootGO,
-            List<Transform> nodeTransforms = null)
+            List<Transform> nodeTransforms = null,
+            MeshImportMode importMode = MeshImportMode.SingleSkinnedMesh)
         {
             if (motionData == null) return null;
 
@@ -236,14 +237,15 @@ namespace SilentTools
                 }
             }
 
-            return ResolveMotion(motionData, clipName, scale, nodeHierarchyPaths);
+            return ResolveMotion(motionData, clipName, scale, nodeHierarchyPaths, importMode);
         }
 
         public static AnimationClip ResolveMotion(
             NinjaMotion motionData,
             string clipName,
             float scale,
-            string[] nodeHierarchyTargets)
+            string[] nodeHierarchyTargets,
+            MeshImportMode importMode = MeshImportMode.SingleSkinnedMesh)
         {
             if (motionData == null) return null;
 
@@ -264,6 +266,13 @@ namespace SilentTools
                     !string.IsNullOrEmpty(nodeHierarchyTargets[subMotion.NodeIndex]))
                 {
                     targetPath = nodeHierarchyTargets[subMotion.NodeIndex];
+                }
+
+                // If this is a material motion in SingleSkinnedMesh mode, the Renderer lives on the root GameObject ("")
+                bool isMaterialMotion = (motionData.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
+                if (isMaterialMotion && importMode == MeshImportMode.SingleSkinnedMesh)
+                {
+                    targetPath = "";
                 }
 
                 CollectSubMotionSegments(subMotion, targetPath, propertySegments, timeScale, scale, motionData.Type);

@@ -1,6 +1,8 @@
+// File: Marathon/Editor/NinjaNextImporterEditor.cs
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.AssetImporters;
+using System.IO;
 
 namespace SilentTools
 {
@@ -9,6 +11,7 @@ namespace SilentTools
     public class NinjaNextImporterEditor : ScriptedImporterEditor
     {
         private SerializedProperty m_ScaleProp;
+        private SerializedProperty m_MeshImportModeProp;
         private SerializedProperty m_ImportMaterialsProp;
         private SerializedProperty m_MaterialLocationProp;
         private SerializedProperty m_MaterialSearchProp;
@@ -21,6 +24,7 @@ namespace SilentTools
         {
             base.OnEnable();
             m_ScaleProp = serializedObject.FindProperty("m_Scale");
+            m_MeshImportModeProp = serializedObject.FindProperty("m_MeshImportMode");
             m_ImportMaterialsProp = serializedObject.FindProperty("m_ImportMaterials");
             m_MaterialLocationProp = serializedObject.FindProperty("m_MaterialLocation");
             m_MaterialSearchProp = serializedObject.FindProperty("m_MaterialSearch");
@@ -34,8 +38,15 @@ namespace SilentTools
         {
             serializedObject.Update();
 
-            EditorGUILayout.LabelField("Import Settings", EditorStyles.boldLabel);
+            string assetPath = ((ScriptedImporter)target).assetPath;
+            string ext = Path.GetExtension(assetPath).ToLowerInvariant();
+
+            EditorGUILayout.LabelField("Mesh Settings", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(m_ScaleProp, new GUIContent("Scale Factor"));
+            if (m_MeshImportModeProp != null)
+            {
+                EditorGUILayout.PropertyField(m_MeshImportModeProp, new GUIContent("Mesh Hierarchy Mode"));
+            }
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Animation Settings", EditorStyles.boldLabel);
@@ -74,7 +85,6 @@ namespace SilentTools
                 {
                     if (GUILayout.Button("Extract Materials...", GUILayout.Height(25)))
                     {
-                        string assetPath = ((ScriptedImporter)target).assetPath;
                         NinjaMaterialResolver.ExtractMaterials(assetPath, m_MaterialLocationProp, m_MaterialSearchPathProp);
                     }
                 }

@@ -1,3 +1,4 @@
+// File: Marathon/Rel/RelFolderResolver.cs
 using System;
 using System.IO;
 using System.Collections.Generic;
@@ -115,6 +116,61 @@ namespace SilentTools
             }
 
             return stageContext;
+        }
+
+        public static KeyValuePair<int, ObjectParamEntry>? FindParamEntryForModel(ObjectParamData paramData, string modelFileName)
+        {
+            if (paramData == null || paramData.ObjectDefinitions == null || string.IsNullOrEmpty(modelFileName))
+                return null;
+
+            string cleanModel = NinjaMaterialResolver.StripTextureExtensions(modelFileName).ToLowerInvariant();
+
+            foreach (var kvp in paramData.ObjectDefinitions)
+            {
+                foreach (var mRef in kvp.Value.Models)
+                {
+                    string cleanRef = NinjaMaterialResolver.StripTextureExtensions(mRef.FileName).ToLowerInvariant();
+                    if (cleanRef.Equals(cleanModel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return kvp;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        public static string FindAnimationFilePath(string animName, string baseDir, bool isMaterialAnim = false)
+        {
+            if (string.IsNullOrEmpty(animName)) return null;
+
+            string cleanName = NinjaMaterialResolver.StripTextureExtensions(animName);
+            string[] extensions = isMaterialAnim 
+                ? new string[] { ".xnv", ".gnv", ".znv", ".xnm", ".gnm", ".znm" } 
+                : new string[] { ".xnm", ".gnm", ".znm", ".xnv", ".gnv", ".znv" };
+
+            foreach (string ext in extensions)
+            {
+                string candidate = Path.Combine(baseDir, cleanName + ext).Replace('\\', '/');
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            string[] guids = AssetDatabase.FindAssets($"{cleanName} t:DefaultAsset");
+            foreach (string guid in guids)
+            {
+                string p = AssetDatabase.GUIDToAssetPath(guid);
+                string pExt = Path.GetExtension(p).ToLowerInvariant();
+                if (Path.GetFileNameWithoutExtension(p).Equals(cleanName, StringComparison.OrdinalIgnoreCase) &&
+                    (pExt == ".xnm" || pExt == ".xnv" || pExt == ".gnm" || pExt == ".gnv" || pExt == ".znm" || pExt == ".znv"))
+                {
+                    return p;
+                }
+            }
+
+            return null;
         }
 
         public static GameObject FindAndInstantiateModelAsset(string modelName, string baseDir)
