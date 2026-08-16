@@ -1,4 +1,4 @@
-// File: Marathon/Editor/NinjaJsonSerializer.cs
+// File: Marathon/Editor/Inspector/NinjaJsonSerializer.cs
 using System;
 using System.IO;
 using System.Text;
@@ -43,6 +43,12 @@ namespace SilentTools.Editor
             if (obj == null)
             {
                 writer.Write("null");
+                return;
+            }
+
+            if (indentLevel > 12)
+            {
+                writer.Write("\"...\"");
                 return;
             }
 
@@ -107,9 +113,25 @@ namespace SilentTools.Editor
                 return;
             }
 
+            if (obj is Quaternion q)
+            {
+                writer.Write($"{{\"x\": {q.x.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"y\": {q.y.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"z\": {q.z.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"w\": {q.w.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}}}");
+                return;
+            }
+
             if (obj is Color col)
             {
                 writer.Write($"{{\"r\": {col.r.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"g\": {col.g.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"b\": {col.b.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"a\": {col.a.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}}}");
+                return;
+            }
+
+            if (obj is Matrix4x4 mat)
+            {
+                writer.Write("{");
+                writer.Write($"\"m00\": {mat.m00.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m01\": {mat.m01.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m02\": {mat.m02.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m03\": {mat.m03.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, ");
+                writer.Write($"\"m10\": {mat.m10.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m11\": {mat.m11.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m12\": {mat.m12.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m13\": {mat.m13.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, ");
+                writer.Write($"\"m20\": {mat.m20.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m21\": {mat.m21.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m22\": {mat.m22.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m23\": {mat.m23.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, ");
+                writer.Write($"\"m30\": {mat.m30.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m31\": {mat.m31.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m32\": {mat.m32.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}, \"m33\": {mat.m33.ToString("F4", System.Globalization.CultureInfo.InvariantCulture)}}}");
                 return;
             }
 
