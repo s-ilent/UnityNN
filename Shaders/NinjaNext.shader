@@ -3,9 +3,8 @@ Shader "NinjaNext/Standard"
     Properties
     {
         // Surface & Alpha
-        _AlphaTest ("Enable Alpha Test", Float) = 0.0
+        [ToggleUI]_AlphaTest ("Enable Alpha Test", Float) = 0.0
         _Cutoff ("Alpha Cutoff", Range(0, 1)) = 0.5
-        [ToggleUI] _AlphaToMask ("Alpha to Coverage", Float) = 0.0
         _Color ("Main Color", Color) = (1,1,1,1)
         _AmbientColor ("Ambient Color", Color) = (1,1,1,1)
         _MainTex ("Base (RGB) Alpha (A)", 2D) = "white" {}
@@ -13,7 +12,7 @@ Shader "NinjaNext/Standard"
         _HDRIntensity ("HDR Intensity", Float) = 1.0
 
         // Matcap
-        _UseMatcap ("Enable Matcap", Float) = 0.0
+        [ToggleUI]_UseMatcap ("Enable Matcap", Float) = 0.0
         _MatcapTex ("Matcap Texture", 2D) = "black" {}
         _MatcapColor ("Matcap Color", Color) = (1,1,1,1)
         [Enum(Multiply,0,Add,1,Replace,2)] _MatcapMode ("Matcap Mode", Float) = 0.0
@@ -76,7 +75,7 @@ Shader "NinjaNext/Standard"
             BlendOp [_BlendOp]
             ZWrite [_ZWrite]
             ZTest [_ZTest]
-            AlphaToMask [_AlphaToMask]
+            AlphaToMask [_AlphaTest]
 
             CGPROGRAM
             #ifndef UNITY_PASS_FORWARDBASE
@@ -104,7 +103,7 @@ Shader "NinjaNext/Standard"
             BlendOp [_BlendOp]
             ZWrite Off
             ZTest LEqual
-            AlphaToMask [_AlphaToMask]
+            AlphaToMask [_AlphaTest]
 
             CGPROGRAM
             #ifndef UNITY_PASS_FORWARDADD

@@ -275,15 +275,9 @@ void applyAlphaMask(inout half4 baseColor)
 {
     if (_AlphaTest > 0.5)
     {
-        if (_AlphaToMask > 0.5)
-        {
-            baseColor.a = saturate((baseColor.a - _Cutoff) / max(fwidth(baseColor.a), 0.0001) + 0.5);
-        }
-        else
-        {
-            clip(baseColor.a - _Cutoff);
-        }
+        baseColor.a = saturate((baseColor.a - _Cutoff) / max(fwidth(baseColor.a), 0.0001) + 0.5);
     }
+    clip(baseColor.a - (1.0/256.0));
 }
 
 // --------------------------------------------------------------------------
