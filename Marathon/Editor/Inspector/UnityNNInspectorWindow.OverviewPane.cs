@@ -163,7 +163,7 @@ namespace SilentTools.Editor
             EditorGUILayout.LabelField(metricLabel, labelStyle, GUILayout.Width(110));
 
             GUIStyle valueStyle = new GUIStyle(EditorStyles.boldLabel) { clipping = TextClipping.Clip };
-            EditorGUILayout.LabelField(metricValue, valueStyle, GUILayout.ExpandWidth(true));
+            EditorGUILayout.LabelField(metricValue, valueStyle, GUILayout.Width(110));
 
             EditorGUILayout.EndHorizontal();
         }
