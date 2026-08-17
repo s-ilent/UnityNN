@@ -146,17 +146,26 @@ namespace SilentTools
         public List<FileListCategoryData> Categories { get; set; } = new List<FileListCategoryData>();
     }
 
-    public class CollisionPolygon
+    public class CollisionTriangle
     {
-        public uint Flags { get; set; }
-        public ushort[] VertexIndices { get; set; } = new ushort[4];
-        public Vector4 Plane { get; set; }
+        public ushort VertexIndex0 { get; set; }
+        public ushort VertexIndex1 { get; set; }
+        public ushort VertexIndex2 { get; set; }
+        public ushort MaterialID { get; set; }
+        public ushort Adjacency0 { get; set; } = 0xFFFF;
+        public ushort Adjacency1 { get; set; } = 0xFFFF;
+        public ushort Adjacency2 { get; set; } = 0xFFFF;
+
+        public ushort[] VertexIndices => new ushort[] { VertexIndex0, VertexIndex1, VertexIndex2 };
     }
 
     public class CollisionMeshData
     {
         public List<Vector3> Vertices { get; set; } = new List<Vector3>();
-        public List<CollisionPolygon> Polygons { get; set; } = new List<CollisionPolygon>();
+        public List<CollisionTriangle> Triangles { get; set; } = new List<CollisionTriangle>();
+        public List<CollisionTriangle> Faces => Triangles;
+        public Vector3? BoundingBoxMin { get; set; }
+        public Vector3? BoundingBoxMax { get; set; }
     }
 
     public class LndLightData

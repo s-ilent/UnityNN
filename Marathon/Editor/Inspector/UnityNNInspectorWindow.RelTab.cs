@@ -56,17 +56,24 @@ namespace SilentTools.Editor
             }
             else if (parsedData is CollisionMeshData colData)
             {
-                EditorGUILayout.LabelField($"Collision Mesh Geometry (Vertices: {colData.Vertices.Count}, Polygons: {colData.Polygons.Count})", EditorStyles.boldLabel);
+                int triCount = colData.Triangles?.Count ?? 0;
+                EditorGUILayout.LabelField($"Collision Mesh Geometry (Vertices: {colData.Vertices.Count}, Triangles: {triCount})", EditorStyles.boldLabel);
+
+                if (colData.BoundingBoxMin.HasValue && colData.BoundingBoxMax.HasValue)
+                {
+                    EditorGUILayout.LabelField($"Bounds Extents: Min ({colData.BoundingBoxMin.Value.x:F2}, {colData.BoundingBoxMin.Value.y:F2}, {colData.BoundingBoxMin.Value.z:F2}) to Max ({colData.BoundingBoxMax.Value.x:F2}, {colData.BoundingBoxMax.Value.y:F2}, {colData.BoundingBoxMax.Value.z:F2})");
+                }
                 EditorGUILayout.Space();
 
-                for (int i = 0; i < Mathf.Min(colData.Polygons.Count, 15); i++)
+                for (int i = 0; i < Mathf.Min(triCount, 25); i++)
                 {
-                    var poly = colData.Polygons[i];
-                    EditorGUILayout.LabelField($"  Polygon [{i}]: Indices ({poly.VertexIndices[0]}, {poly.VertexIndices[1]}, {poly.VertexIndices[2]}, {poly.VertexIndices[3]}) | Flags: 0x{poly.Flags:X8}");
+                    var tri = colData.Triangles[i];
+                    string adjStr = $"[{tri.Adjacency0:X4}, {tri.Adjacency1:X4}, {tri.Adjacency2:X4}]";
+                    EditorGUILayout.LabelField($"  Triangle [{i:000}]: ({tri.VertexIndex0}, {tri.VertexIndex1}, {tri.VertexIndex2}) | Mat ID: {tri.MaterialID} | Adjacency: {adjStr}");
                 }
-                if (colData.Polygons.Count > 15)
+                if (triCount > 25)
                 {
-                    EditorGUILayout.LabelField($"  ... and {colData.Polygons.Count - 15} more polygons.");
+                    EditorGUILayout.LabelField($"  ... and {triCount - 25} more triangles.");
                 }
             }
             else if (parsedData is LndEffectData effect)

@@ -527,7 +527,8 @@ namespace SilentTools
         {
             if (parsedData == null) return false;
             if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
-            if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0;
+            if (parsedData is CollisionMeshData colData) 
+                            return colData.Vertices != null && colData.Vertices.Count > 0 && colData.Triangles != null && colData.Triangles.Count > 0;
             if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
             if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
             if (parsedData is ObjectParamData paramData) return paramData.ObjectDefinitions != null && paramData.ObjectDefinitions.Count > 0;

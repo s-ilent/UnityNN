@@ -87,7 +87,7 @@ namespace SilentTools.Editor
                 {
                     DrawMetricRow("REL Type", "Collision Geometry");
                     DrawMetricRow("Vertices", $"{colData.Vertices.Count}");
-                    DrawMetricRow("Polygons", $"{colData.Polygons.Count}");
+                    DrawMetricRow("Triangles", $"{colData.Triangles?.Count ?? 0}");
                 }
                 else if (m_Context.RelData is FileListData fileListData)
                 {
@@ -176,13 +176,13 @@ namespace SilentTools.Editor
                 var data = m_Context.NinjaData.Data;
                 switch (m_SelectedTab)
                 {
-                    case 0: 
-                        DumpCategoryJson(data.Object?.Nodes); 
+                    case 0:
+                        DumpCategoryJson(data.Object?.Nodes);
                         break;
-                    case 1: 
-                        DumpCategoryJson(data.Object != null ? (object)data.Object.SubObjects : null); 
+                    case 1:
+                        DumpCategoryJson(data.Object != null ? (object)data.Object.SubObjects : null);
                         break;
-                    case 2: 
+                    case 2:
                         if (data.Object?.Materials != null && data.Object.Materials.Count > 0)
                             DumpCategoryJson(data.Object.Materials);
                         else if (data.TextureList != null)
@@ -190,7 +190,7 @@ namespace SilentTools.Editor
                         else
                             DumpCategoryJson(null);
                         break;
-                    case 3: 
+                    case 3:
                         if (data.Motion != null && data.MaterialMotion != null)
                             DumpCategoryJson(new Dictionary<string, object> { { "NodeMotion", data.Motion }, { "MaterialMotion", data.MaterialMotion } });
                         else if (data.MaterialMotion != null)
@@ -198,7 +198,7 @@ namespace SilentTools.Editor
                         else
                             DumpCategoryJson(data.Motion);
                         break;
-                    case 4: 
+                    case 4:
                         if (data.Camera != null) DumpCategoryJson(data.Camera);
                         else if (data.Light != null) DumpCategoryJson(data.Light);
                         else if (data.EffectList != null) DumpCategoryJson(data.EffectList);
