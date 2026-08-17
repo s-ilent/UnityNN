@@ -9,21 +9,39 @@ using Marathon.Formats.Mesh.Ninja;
 
 namespace SilentTools
 {
+    /// <summary>
+    /// Converts Sega NN BAMS/Radian motion tracks into native Unity AnimationClip curves.
+    /// Handles node bone transformations, UV scrolling tracks, and material color animations.
+    /// </summary>
     public static class NinjaMotionResolver
     {
-        private static readonly string[] MotionExtensions = new string[] { ".xnm", ".gnm", ".znm" };
-        private static readonly string[] MaterialMotionExtensions = new string[] { ".xnv", ".gnv", ".znv" };
-        private static readonly string[] ModelExtensions = new string[] { ".xna", ".xnn", ".xnj", ".xno", ".gna", ".gnn", ".gno" };
+        private static readonly string[] MotionExtensions = new[] { ".xnm", ".gnm", ".znm" };
+        private static readonly string[] MaterialMotionExtensions = new[] { ".xnv", ".gnv", ".znv" };
+        private static readonly string[] ModelExtensions = new[] { ".xna", ".xnn", ".xnj", ".xno", ".gna", ".gnn", ".gno" };
 
+        #region Angle Conversion Helpers
+        /// <summary>
+        /// Converts a 16-bit Binary Angle Measurement System (BAMS) short to degrees.
+        /// Range: 32768 = 180 degrees, 65536 = 360 degrees.
+        /// </summary>
         public static float BamsToDegrees(int bamAngle) => (float)((double)bamAngle * (180.0 / 32768.0));
-        public static float Bams32ToDegrees(int bam32Angle) => (float)((double)bam32Angle * (360.0 / 65536.0));
-        public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
 
-        private struct PropertyKey : IEquatable<PropertyKey>
+        /// <summary>
+        /// Converts a 32-bit BAMS integer to degrees.
+        /// </summary>
+        public static float Bams32ToDegrees(int bam32Angle) => (float)((double)bam32Angle * (360.0 / 65536.0));
+
+        /// <summary>
+        /// Converts radians to degrees.
+        /// </summary>
+        public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
+        #endregion
+
+        private readonly struct PropertyKey : IEquatable<PropertyKey>
         {
-            public string TargetPath;
-            public Type ComponentType;
-            public string PropertyName;
+            public readonly string TargetPath;
+            public readonly Type ComponentType;
+            public readonly string PropertyName;
 
             public PropertyKey(string targetPath, Type componentType, string propertyName)
             {
@@ -32,22 +50,31 @@ namespace SilentTools
                 PropertyName = propertyName ?? "";
             }
 
-            public bool Equals(PropertyKey other) =>
-                TargetPath == other.TargetPath && ComponentType == other.ComponentType && PropertyName == other.PropertyName;
+            public bool Equals(PropertyKey other)
+            {
+                return TargetPath == other.TargetPath &&
+                       ComponentType == other.ComponentType &&
+                       PropertyName == other.PropertyName;
+            }
 
             public override bool Equals(object obj) => obj is PropertyKey other && Equals(other);
 
-            public override int GetHashCode() =>
-                unchecked(17 * 23 + TargetPath.GetHashCode() * 23 + (ComponentType != null ? ComponentType.GetHashCode() : 0) * 23 + PropertyName.GetHashCode());
+            public override int GetHashCode()
+            {
+                return HashCode.Combine(TargetPath, ComponentType, PropertyName);
+            }
         }
 
         private class SubMotionSegment
         {
             public SubMotionInterpolationType InterpolationType;
-            public List<Keyframe> Keyframes = new List<Keyframe>();
+            public readonly List<Keyframe> Keyframes = new List<Keyframe>();
         }
 
         #region Motion Discovery & Linking
+        /// <summary>
+        /// Auto-discovers and loads adjacent .xnm (node motion) and .xnv (material motion) files.
+        /// </summary>
         public static void ResolveLinkedMotions(
             string assetPath,
             UnityEditor.AssetImporters.AssetImportContext ctx,
@@ -56,8 +83,11 @@ namespace SilentTools
             out string nodeMotionSource,
             out string matMotionSource)
         {
-            nodeMotion = null; matMotion = null;
-            nodeMotionSource = "Embedded"; matMotionSource = "Embedded";
+            nodeMotion = null;
+            matMotion = null;
+            nodeMotionSource = "Embedded";
+            matMotionSource = "Embedded";
+
             if (string.IsNullOrEmpty(assetPath)) return;
 
             string baseDir = Path.GetDirectoryName(assetPath);
@@ -67,9 +97,16 @@ namespace SilentTools
             matMotion = LoadLinkedMotion(baseDir, baseName, MaterialMotionExtensions, assetPath, ctx, out matMotionSource);
         }
 
-        private static NinjaMotion LoadLinkedMotion(string baseDir, string baseName, string[] extensions, string assetPath, UnityEditor.AssetImporters.AssetImportContext ctx, out string sourceDesc)
+        private static NinjaMotion LoadLinkedMotion(
+            string baseDir,
+            string baseName,
+            string[] extensions,
+            string assetPath,
+            UnityEditor.AssetImporters.AssetImportContext ctx,
+            out string sourceDesc)
         {
             sourceDesc = "Embedded";
+
             foreach (string ext in extensions)
             {
                 string candidate = Path.Combine(baseDir, baseName + ext).Replace('\\', '/');
@@ -85,7 +122,7 @@ namespace SilentTools
                         if (mot != null)
                         {
                             sourceDesc = $"External: {Path.GetFileName(candidate)}";
-                            if (ctx != null) ctx.DependsOnSourceAsset(candidate);
+                            ctx?.DependsOnSourceAsset(candidate);
                             return mot;
                         }
                     }
@@ -98,9 +135,13 @@ namespace SilentTools
             return null;
         }
 
+        /// <summary>
+        /// Resolves the bone/node hierarchy paths for an asset to bind AnimationClip tracks correctly.
+        /// </summary>
         public static string[] ResolveNodeHierarchyTargets(string assetPath, UnityEditor.AssetImporters.AssetImportContext ctx = null)
         {
-            if (string.IsNullOrEmpty(assetPath)) return new string[0];
+            if (string.IsNullOrEmpty(assetPath)) return Array.Empty<string>();
+
             string baseDir = Path.GetDirectoryName(assetPath);
             string baseName = Path.GetFileNameWithoutExtension(assetPath);
 
@@ -113,31 +154,35 @@ namespace SilentTools
                     {
                         NinjaNext loader = new NinjaNext();
                         loader.Load(candidate);
+
                         if (loader.Data.Object?.Nodes != null && loader.Data.Object.Nodes.Count > 0)
                         {
-                            if (ctx != null) ctx.DependsOnSourceAsset(candidate);
+                            ctx?.DependsOnSourceAsset(candidate);
                             return ComputeNodeHierarchyPaths(loader.Data.Object.Nodes);
                         }
+
                         if (loader.Data.NodeNameList?.NinjaNodeNames != null)
                         {
-                            if (ctx != null) ctx.DependsOnSourceAsset(candidate);
+                            ctx?.DependsOnSourceAsset(candidate);
                             return loader.Data.NodeNameList.NinjaNodeNames.ToArray();
                         }
                     }
                     catch { }
                 }
             }
-            return new string[0];
+            return Array.Empty<string>();
         }
 
         public static string[] ComputeNodeHierarchyPaths(List<NinjaNode> nodes)
         {
-            if (nodes == null || nodes.Count == 0) return new string[0];
+            if (nodes == null || nodes.Count == 0) return Array.Empty<string>();
+
             string[] paths = new string[nodes.Count];
             for (int i = 0; i < nodes.Count; i++)
             {
                 int curr = i;
                 List<string> parts = new List<string>();
+
                 while (curr >= 0 && curr < nodes.Count)
                 {
                     NinjaNode node = nodes[curr];
@@ -145,6 +190,7 @@ namespace SilentTools
                     parts.Insert(0, !string.IsNullOrEmpty(node.Name) ? node.Name : $"Node_{curr:0000}");
                     curr = node.ParentIndex;
                 }
+
                 paths[i] = string.Join("/", parts);
             }
             return paths;
@@ -152,6 +198,9 @@ namespace SilentTools
         #endregion
 
         #region Clip Resolution
+        /// <summary>
+        /// Converts a NinjaMotion chunk into a native Unity AnimationClip bound to GameObject hierarchies.
+        /// </summary>
         public static AnimationClip ResolveMotion(
             NinjaMotion motionData,
             string clipName,
@@ -167,17 +216,21 @@ namespace SilentTools
             {
                 paths = new string[nodeTransforms.Count];
                 for (int i = 0; i < nodeTransforms.Count; i++)
+                {
                     paths[i] = nodeTransforms[i] != null ? GetTransformPath(nodeTransforms[i], rootGO.transform) : "";
+                }
             }
             else if (rootGO != null)
             {
                 Transform[] transforms = rootGO.GetComponentsInChildren<Transform>(true);
                 paths = new string[transforms.Length];
                 for (int i = 0; i < transforms.Length; i++)
+                {
                     paths[i] = GetTransformPath(transforms[i], rootGO.transform);
+                }
             }
 
-            return ResolveMotionInternal(motionData, clipName, scale, paths, nodeTransforms, rootGO, importMode);
+            return ResolveMotionInternal(motionData, clipName, scale, paths, nodeTransforms, rootGO);
         }
 
         public static AnimationClip ResolveMotion(
@@ -187,7 +240,7 @@ namespace SilentTools
             string[] nodeHierarchyTargets,
             MeshImportMode importMode = MeshImportMode.CombinedByNode)
         {
-            return ResolveMotionInternal(motionData, clipName, scale, nodeHierarchyTargets, null, null, importMode);
+            return ResolveMotionInternal(motionData, clipName, scale, nodeHierarchyTargets, null, null);
         }
 
         private static AnimationClip ResolveMotionInternal(
@@ -196,47 +249,40 @@ namespace SilentTools
             float scale,
             string[] nodeHierarchyTargets,
             List<Transform> nodeTransforms,
-            GameObject rootGO,
-            MeshImportMode importMode)
+            GameObject rootGO)
         {
             if (motionData == null) return null;
 
-            var clip = new AnimationClip { name = clipName };
+            AnimationClip clip = new AnimationClip { name = clipName };
             float framerate = motionData.Framerate <= 0 ? 60.0f : motionData.Framerate;
             float timeScale = 60.0f / framerate;
             float maxTime = (motionData.EndFrame / 60.0f) * timeScale;
 
-            if (nodeHierarchyTargets == null) nodeHierarchyTargets = new string[0];
+            nodeHierarchyTargets ??= Array.Empty<string>();
             Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments = new Dictionary<PropertyKey, List<SubMotionSegment>>();
-
             bool isMatMotion = (motionData.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
 
-            foreach (NinjaSubMotion subMotion in motionData.SubMotions)
+            foreach (NinjaSubMotion sm in motionData.SubMotions)
             {
-                if (subMotion?.Keyframes == null || subMotion.Keyframes.Count == 0) continue;
+                if (sm?.Keyframes == null || sm.Keyframes.Count == 0) continue;
 
-                string targetPath = "";
-                if (!isMatMotion)
-                {
-                    targetPath = (subMotion.NodeIndex >= 0 && subMotion.NodeIndex < nodeHierarchyTargets.Length && !string.IsNullOrEmpty(nodeHierarchyTargets[subMotion.NodeIndex]))
-                        ? nodeHierarchyTargets[subMotion.NodeIndex] : subMotion.NodeIndex.ToString("0000");
-                }
-                else
-                {
-                    targetPath = ResolveMaterialRendererPath(subMotion.NodeIndex, rootGO);
-                }
+                string targetPath = !isMatMotion
+                    ? ((sm.NodeIndex >= 0 && sm.NodeIndex < nodeHierarchyTargets.Length && !string.IsNullOrEmpty(nodeHierarchyTargets[sm.NodeIndex]))
+                        ? nodeHierarchyTargets[sm.NodeIndex] : sm.NodeIndex.ToString("0000"))
+                    : ResolveMaterialRendererPath(sm.NodeIndex, rootGO);
 
-                CollectSubMotionSegments(subMotion, targetPath, propertySegments, timeScale, scale, motionData.Type);
+                CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, motionData.Type);
             }
 
+            // Fill companion X/Y/Z channels so un-animated axes stay locked to their rest poses
             FillMissingCompanionChannels(propertySegments, nodeTransforms, nodeHierarchyTargets, maxTime);
 
             foreach (var kvp in propertySegments)
             {
-                AnimationCurve mergedCurve = BuildMergedCurve(kvp.Value);
-                if (mergedCurve?.keys.Length > 0)
+                AnimationCurve merged = BuildMergedCurve(kvp.Value);
+                if (merged?.keys.Length > 0)
                 {
-                    clip.SetCurve(kvp.Key.TargetPath, kvp.Key.ComponentType, kvp.Key.PropertyName, mergedCurve);
+                    clip.SetCurve(kvp.Key.TargetPath, kvp.Key.ComponentType, kvp.Key.PropertyName, merged);
                 }
             }
 
@@ -252,16 +298,13 @@ namespace SilentTools
         {
             if (rootGO == null) return "";
 
-            Renderer[] renderers = rootGO.GetComponentsInChildren<Renderer>(true);
-            foreach (var r in renderers)
+            foreach (var r in rootGO.GetComponentsInChildren<Renderer>(true))
             {
-                if (r == null) continue;
-                if (r.name.Contains($"Mat_{materialIndex:00}") || r.name.Contains($"Mat_{materialIndex}"))
+                if (r != null && (r.name.Contains($"Mat_{materialIndex:00}") || r.name.Contains($"Mat_{materialIndex}")))
                 {
                     return GetTransformPath(r.transform, rootGO.transform);
                 }
             }
-
             return "";
         }
         #endregion
@@ -275,65 +318,91 @@ namespace SilentTools
             float scale,
             MotionType parentType)
         {
-            bool isNode = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_NODE || (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
+            bool isNode = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) is MotionType.NND_MOTIONTYPE_NODE or 0;
             bool isMat = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
             uint flags = (uint)subMotion.Type;
 
+            // 1. Vector3 Tracks (Translation, Scale, Diffuse RGB)
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_VECTOR)
             {
-                bool hasTX = isNode && (flags & 0x100U) != 0, hasTY = isNode && (flags & 0x200U) != 0, hasTZ = isNode && (flags & 0x400U) != 0;
-                bool hasSX = isNode && (flags & 0x8000U) != 0, hasSY = isNode && (flags & 0x10000U) != 0, hasSZ = isNode && (flags & 0x20000U) != 0;
-                bool hasCR = isMat && (flags & 0x200U) != 0, hasCG = isMat && (flags & 0x400U) != 0, hasCB = isMat && (flags & 0x800U) != 0;
+                bool hasTranslation = isNode && (flags & 0x700U) != 0;
+                bool hasScale = isNode && (flags & 0x38000U) != 0;
+                bool hasColor = isMat && (flags & 0xE00U) != 0;
 
-                string prefix = (hasTX || hasTY || hasTZ) ? "localPosition" : ((hasSX || hasSY || hasSZ) ? "localScale" : "material._Color");
+                string prefix = hasTranslation ? "localPosition" : (hasScale ? "localScale" : "material._Color");
                 Type compType = isNode ? typeof(Transform) : typeof(Renderer);
                 string[] suffixes = isNode ? new[] { ".x", ".y", ".z" } : new[] { ".r", ".g", ".b" };
-                bool[] active = (hasTX || hasTY || hasTZ) ? new[] { hasTX, hasTY, hasTZ } : ((hasSX || hasSY || hasSZ) ? new[] { hasSX, hasSY, hasSZ } : new[] { hasCR, hasCG, hasCB });
+
+                bool[] active = hasTranslation
+                    ? new[] { (flags & 0x100U) != 0, (flags & 0x200U) != 0, (flags & 0x400U) != 0 }
+                    : (hasScale
+                        ? new[] { (flags & 0x8000U) != 0, (flags & 0x10000U) != 0, (flags & 0x20000U) != 0 }
+                        : new[] { (flags & 0x200U) != 0, (flags & 0x400U) != 0, (flags & 0x800U) != 0 });
 
                 foreach (var objKf in subMotion.Keyframes)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_VECTOR)objKf;
                     float time = (kf.Frame / 60.0f) * timeScale;
-                    Vector3 val = kf.Value;
-
-                    if (hasTX || hasTY || hasTZ) val = new Vector3(-val.x * scale, val.y * scale, val.z * scale);
+                    Vector3 val = hasTranslation
+                        ? new Vector3(-kf.Value.x * scale, kf.Value.y * scale, kf.Value.z * scale)
+                        : kf.Value;
 
                     for (int c = 0; c < 3; c++)
                     {
                         if (active[c])
                         {
                             PropertyKey key = new PropertyKey(targetPath, compType, prefix + suffixes[c]);
-                            AddKeyframeToSegment(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, c == 0 ? val.x : (c == 1 ? val.y : val.z)));
+                            float channelVal = c == 0 ? val.x : (c == 1 ? val.y : val.z);
+                            AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, channelVal));
                         }
                     }
                 }
                 return;
             }
 
+            // 2. 3-Axis BAMS Rotation Tracks (RotateA16)
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)
             {
-                bool hasRX = (flags & 0x800U) != 0, hasRY = (flags & 0x1000U) != 0, hasRZ = (flags & 0x2000U) != 0;
+                bool hasRX = (flags & 0x800U) != 0;
+                bool hasRY = (flags & 0x1000U) != 0;
+                bool hasRZ = (flags & 0x2000U) != 0;
+
                 foreach (var objKf in subMotion.Keyframes)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)objKf;
                     float time = (kf.Frame / 60.0f) * timeScale;
 
-                    if (hasRX) AddKeyframeToSegment(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, BamsToDegrees(kf.Value1)));
-                    if (hasRY) AddKeyframeToSegment(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value2)));
-                    if (hasRZ) AddKeyframeToSegment(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value3)));
+                    if (hasRX) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, BamsToDegrees(kf.Value1)));
+                    if (hasRY) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value2)));
+                    if (hasRZ) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value3)));
                 }
                 return;
             }
 
+            // 3. Scalar Tracks (Single Axis Translation, Rotation, UV Offset)
             List<PropertyKey> keys = GetTargetPropertyKeys(subMotion.Type, parentType, targetPath);
             if (keys.Count == 0) return;
 
             foreach (var kf in subMotion.Keyframes)
             {
-                float time = 0f, scalar = 0f;
-                if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32) { time = (s32.Frame / 60f) * timeScale; scalar = (flags & 8U) != 0 ? Bams32ToDegrees(s32.Value) : s32.Value; }
-                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f) { time = (f.Frame / 60f) * timeScale; scalar = (flags & 4U) != 0 ? RadiansToDegrees(f.Value) : f.Value; }
-                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16) { time = (s16.Frame / 60f) * timeScale; scalar = BamsToDegrees(s16.Value); }
+                float time = 0f;
+                float scalar = 0f;
+
+                if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32)
+                {
+                    time = (s32.Frame / 60f) * timeScale;
+                    scalar = (flags & 8U) != 0 ? Bams32ToDegrees(s32.Value) : s32.Value;
+                }
+                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f)
+                {
+                    time = (f.Frame / 60f) * timeScale;
+                    scalar = (flags & 4U) != 0 ? RadiansToDegrees(f.Value) : f.Value;
+                }
+                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16)
+                {
+                    time = (s16.Frame / 60f) * timeScale;
+                    scalar = BamsToDegrees(s16.Value);
+                }
 
                 foreach (var key in keys)
                 {
@@ -341,7 +410,7 @@ namespace SilentTools
                     if (key.PropertyName.Contains("Position")) val *= scale;
                     if (key.PropertyName.EndsWith(".x") || key.PropertyName.EndsWith("AnglesRaw.y") || key.PropertyName.EndsWith("AnglesRaw.z")) val *= -1f;
 
-                    AddKeyframeToSegment(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, val));
+                    AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, val));
                 }
             }
         }
@@ -349,7 +418,7 @@ namespace SilentTools
         private static List<PropertyKey> GetTargetPropertyKeys(SubMotionType subType, MotionType parentType, string path)
         {
             List<PropertyKey> keys = new List<PropertyKey>();
-            bool isNode = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_NODE || (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == 0;
+            bool isNode = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) is MotionType.NND_MOTIONTYPE_NODE or 0;
             bool isMat = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
             uint val = (uint)subType;
 
@@ -374,11 +443,10 @@ namespace SilentTools
                 if ((val & 0x800U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._Color.b"));
                 if ((val & 0x1000U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._Color.a"));
 
-                // Category 16 (Material): 0x800000 is OFFSET_U (_MainTex_ST.z) and 0x1000000 is OFFSET_V (_MainTex_ST.w)
+                // UV Offset Tracks
                 if ((val & 0x800000U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._MainTex_ST.z"));
                 if ((val & 0x1000000U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._MainTex_ST.w"));
             }
-
             return keys;
         }
 
@@ -388,9 +456,9 @@ namespace SilentTools
             string[] nodeHierarchyTargets,
             float maxTime)
         {
-            List<PropertyKey> existingKeys = new List<PropertyKey>(propertySegments.Keys);
+            var existingKeys = new List<PropertyKey>(propertySegments.Keys);
             Regex vectorPattern = new Regex(@"^(.*?)(localPosition|localEulerAnglesRaw|localScale|_MainTex_ST|_Color|_SpecColor|_EmissionColor)(\.[xyzw|rgba])$");
-            HashSet<string> processedBases = new HashSet<string>();
+            HashSet<string> processedGroups = new HashSet<string>();
 
             foreach (var key in existingKeys)
             {
@@ -399,24 +467,30 @@ namespace SilentTools
 
                 string propBase = m.Groups[1].Value;
                 string propType = m.Groups[2].Value;
-                string groupUniqueId = $"{key.TargetPath}|{key.ComponentType.Name}|{propBase}{propType}";
+                string groupKey = $"{key.TargetPath}|{key.ComponentType.Name}|{propBase}{propType}";
 
-                if (!processedBases.Add(groupUniqueId)) continue;
+                if (!processedGroups.Add(groupKey)) continue;
 
                 Transform nodeTr = FindNodeTransform(key.TargetPath, nodeTransforms, nodeHierarchyTargets);
-                string fullPrefix = propBase + propType;
-
-                string[] suffixes = (propType == "_Color" || propType == "_SpecColor" || propType == "_EmissionColor")
+                string[] suffixes = (propType is "_Color" or "_SpecColor" or "_EmissionColor")
                     ? new[] { ".r", ".g", ".b", ".a" }
                     : (propType == "_MainTex_ST" ? new[] { ".x", ".y", ".z", ".w" } : new[] { ".x", ".y", ".z" });
 
                 for (int s = 0; s < suffixes.Length; s++)
                 {
-                    PropertyKey channelKey = new PropertyKey(key.TargetPath, key.ComponentType, fullPrefix + suffixes[s]);
+                    PropertyKey channelKey = new PropertyKey(key.TargetPath, key.ComponentType, propBase + propType + suffixes[s]);
                     if (!propertySegments.ContainsKey(channelKey))
                     {
-                        float defaultVal = GetDefaultChannelValue(propType, s, nodeTr);
-                        AddConstantChannel(propertySegments, channelKey, defaultVal, maxTime);
+                        float defVal = GetDefaultChannelValue(propType, s, nodeTr);
+                        var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT };
+                        seg.Keyframes.Add(new Keyframe(0f, defVal, float.PositiveInfinity, float.PositiveInfinity));
+
+                        if (maxTime > 0.001f)
+                        {
+                            seg.Keyframes.Add(new Keyframe(maxTime, defVal, float.PositiveInfinity, float.PositiveInfinity));
+                        }
+
+                        propertySegments[channelKey] = new List<SubMotionSegment> { seg };
                     }
                 }
             }
@@ -433,26 +507,22 @@ namespace SilentTools
                 case "localScale":
                     return tr != null ? (index == 0 ? tr.localScale.x : (index == 1 ? tr.localScale.y : tr.localScale.z)) : 1f;
                 case "_MainTex_ST":
-                    return (index == 0 || index == 1) ? 1.0f : 0.0f; // Tiling (X=1, Y=1), Offset (Z=0, W=0)
+                    return (index is 0 or 1) ? 1.0f : 0.0f; // Scale X/Y = 1.0, Offset Z/W = 0.0
                 case "_Color":
-                    return 1.0f; // R=1, G=1, B=1, A=1
+                    return 1.0f;
                 case "_SpecColor":
                 case "_EmissionColor":
-                    return index == 3 ? 1.0f : 0.0f; // Alpha=1, RGB=0
+                    return index == 3 ? 1.0f : 0.0f; // Alpha = 1.0, RGB = 0.0
                 default:
                     return 0f;
             }
         }
 
-        private static void AddConstantChannel(Dictionary<PropertyKey, List<SubMotionSegment>> segments, PropertyKey key, float val, float maxTime)
-        {
-            var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT };
-            seg.Keyframes.Add(new Keyframe(0f, val, float.PositiveInfinity, float.PositiveInfinity));
-            if (maxTime > 0.001f) seg.Keyframes.Add(new Keyframe(maxTime, val, float.PositiveInfinity, float.PositiveInfinity));
-            segments[key] = new List<SubMotionSegment> { seg };
-        }
-
-        private static void AddKeyframeToSegment(Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments, PropertyKey key, SubMotionInterpolationType interp, Keyframe kf)
+        private static void AddKeyframe(
+            Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments,
+            PropertyKey key,
+            SubMotionInterpolationType interp,
+            Keyframe kf)
         {
             if (!propertySegments.TryGetValue(key, out List<SubMotionSegment> segments))
             {
@@ -460,20 +530,23 @@ namespace SilentTools
                 propertySegments[key] = segments;
             }
 
-            SubMotionSegment current = (segments.Count > 0 && segments[segments.Count - 1].InterpolationType == interp)
-                ? segments[segments.Count - 1] : null;
+            SubMotionSegment curr = (segments.Count > 0 && segments[segments.Count - 1].InterpolationType == interp)
+                ? segments[segments.Count - 1]
+                : null;
 
-            if (current == null)
+            if (curr == null)
             {
-                current = new SubMotionSegment { InterpolationType = interp };
-                segments.Add(current);
+                curr = new SubMotionSegment { InterpolationType = interp };
+                segments.Add(curr);
             }
-            current.Keyframes.Add(kf);
+
+            curr.Keyframes.Add(kf);
         }
 
         private static Transform FindNodeTransform(string path, List<Transform> nodeTransforms, string[] targets)
         {
             if (nodeTransforms == null) return null;
+
             for (int i = 0; i < nodeTransforms.Count; i++)
             {
                 if (i < targets.Length && targets[i] == path) return nodeTransforms[i];
@@ -482,17 +555,22 @@ namespace SilentTools
             return null;
         }
 
-        private static string GetTransformPath(Transform transform, Transform root)
+        public static string GetTransformPath(Transform transform, Transform root)
         {
-            if (transform == root) return "";
+            if (transform == root || transform == null) return "";
             string path = transform.name;
             Transform curr = transform.parent;
-            while (curr != null && curr != root) { path = curr.name + "/" + path; curr = curr.parent; }
+
+            while (curr != null && curr != root)
+            {
+                path = curr.name + "/" + path;
+                curr = curr.parent;
+            }
             return path;
         }
         #endregion
 
-        #region Tangent & Curve Merging
+        #region Tangents & Curve Merging
         private static AnimationCurve BuildMergedCurve(List<SubMotionSegment> segments)
         {
             if (segments == null || segments.Count == 0) return null;
@@ -500,17 +578,22 @@ namespace SilentTools
 
             foreach (var seg in segments)
             {
-                if (seg.Keyframes == null || seg.Keyframes.Count == 0) continue;
+                if (seg.Keyframes.Count == 0) continue;
 
                 bool isConstant = seg.InterpolationType.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT);
                 Keyframe[] keys = seg.Keyframes.ToArray();
 
                 if (isConstant)
                 {
-                    for (int i = 0; i < keys.Length; i++) { keys[i].inTangent = float.PositiveInfinity; keys[i].outTangent = float.PositiveInfinity; }
+                    for (int i = 0; i < keys.Length; i++)
+                    {
+                        keys[i].inTangent = float.PositiveInfinity;
+                        keys[i].outTangent = float.PositiveInfinity;
+                    }
                 }
                 else if (keys.Length >= 2)
                 {
+                    // Linear tangent calculation across keyframe intervals
                     for (int i = 0; i < keys.Length - 1; i++)
                     {
                         float dt = keys[i + 1].time - keys[i].time;
@@ -531,23 +614,29 @@ namespace SilentTools
             if (allKfs.Count == 0) return null;
             allKfs.Sort((a, b) => a.time.CompareTo(b.time));
 
-            List<Keyframe> uniqueKfs = new List<Keyframe>();
+            // Remove co-located duplicate keyframes
+            List<Keyframe> unique = new List<Keyframe>();
             for (int i = 0; i < allKfs.Count; i++)
             {
                 Keyframe kf = allKfs[i];
-                if (uniqueKfs.Count > 0)
+                if (unique.Count > 0)
                 {
-                    Keyframe prev = uniqueKfs[uniqueKfs.Count - 1];
+                    Keyframe prev = unique[unique.Count - 1];
                     if (Mathf.Abs(prev.time - kf.time) < 0.0001f)
                     {
-                        if (Mathf.Abs(prev.value - kf.value) < 0.0001f) { prev.outTangent = kf.outTangent; uniqueKfs[uniqueKfs.Count - 1] = prev; continue; }
+                        if (Mathf.Abs(prev.value - kf.value) < 0.0001f)
+                        {
+                            prev.outTangent = kf.outTangent;
+                            unique[unique.Count - 1] = prev;
+                            continue;
+                        }
                         kf.time = prev.time + 0.0001f;
                     }
                 }
-                uniqueKfs.Add(kf);
+                unique.Add(kf);
             }
 
-            return new AnimationCurve(uniqueKfs.ToArray());
+            return new AnimationCurve(unique.ToArray());
         }
         #endregion
     }

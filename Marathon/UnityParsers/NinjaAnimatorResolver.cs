@@ -37,8 +37,8 @@ namespace SilentTools
             NinjaMotion matMotion = loader.Data.MaterialMotion;
 
             NinjaMotionResolver.ResolveLinkedMotions(assetPath, ctx, out NinjaMotion extraNodeMot, out NinjaMotion extraMatMot, out _, out _);
-            if (nodeMotion == null) nodeMotion = extraNodeMot;
-            if (matMotion == null) matMotion = extraMatMot;
+            nodeMotion ??= extraNodeMot;
+            matMotion ??= extraMatMot;
 
             if (nodeMotion != null)
             {
@@ -62,7 +62,7 @@ namespace SilentTools
                 }
             }
 
-            // 2. obj_param.xnr Associated Animations Resolution
+            // 2. obj_param Associated Animations Resolution
             ResolvedStageContext stageContext = RelFolderResolver.ResolveAdjacentStageFiles(assetPath, ctx);
             var matchedParam = RelFolderResolver.FindParamEntryForModel(stageContext.ObjectParams, assetName);
 
@@ -77,128 +77,81 @@ namespace SilentTools
                 RelObjectAnimationComponent animMeta = rootGO.AddComponent<RelObjectAnimationComponent>();
                 animMeta.objID = objId;
 
+                AnimationClip ResolveParamClip(string rawName, bool isMat, string prefix)
+                {
+                    if (string.IsNullOrEmpty(rawName)) return null;
+                    string key = rawName.Trim();
+                    if (loadedClipCache.TryGetValue(key, out AnimationClip cached)) return cached;
+
+                    string animPath = RelFolderResolver.FindAnimationFilePath(key, stageContext.BaseDirectory, isMat);
+                    if (!string.IsNullOrEmpty(animPath))
+                    {
+                        try
+                        {
+                            NinjaNext animLoader = new NinjaNext();
+                            animLoader.Load(animPath);
+                            NinjaMotion mot = isMat ? (animLoader.Data.MaterialMotion ?? animLoader.Data.Motion) : animLoader.Data.Motion;
+                            if (mot != null)
+                            {
+                                ctx.DependsOnSourceAsset(animPath);
+                                string clipId = $"{prefix}_{key}";
+                                AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, clipId, scale, rootGO, nodeTransforms, importMode);
+                                if (clip != null)
+                                {
+                                    if (loadedClipNames.Add(clip.name))
+                                    {
+                                        ctx.AddObjectToAsset(clipId, clip);
+                                        loadedClips.Add(clip);
+                                    }
+                                    loadedClipCache[key] = clip;
+                                    return clip;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[NinjaAnimatorResolver] Failed loading anim {animPath}: {ex.Message}");
+                        }
+                    }
+                    return null;
+                }
+
                 for (int a = 0; a < paramEntry.Animations.Count; a++)
                 {
                     var aRef = paramEntry.Animations[a];
                     if (!string.IsNullOrEmpty(aRef.BoneAnimName)) distinctBoneFiles.Add(aRef.BoneAnimName.Trim());
                     if (!string.IsNullOrEmpty(aRef.TexAnimName)) distinctTexFiles.Add(aRef.TexAnimName.Trim());
 
-                    ObjectAnimationEntryData entryData = new ObjectAnimationEntryData
+                    AnimationClip bClip = ResolveParamClip(aRef.BoneAnimName, false, "Anim");
+                    AnimationClip mClip = ResolveParamClip(aRef.TexAnimName, true, "MatAnim");
+                    mainNodeClip ??= bClip;
+                    mainMatClip ??= mClip;
+
+                    animMeta.animations.Add(new ObjectAnimationEntryData
                     {
                         id1 = aRef.UnknownIdentifier1,
                         id2 = aRef.UnknownIdentifier2,
                         boneAnimName = aRef.BoneAnimName,
                         texAnimName = aRef.TexAnimName,
+                        boneClip = bClip,
+                        materialClip = mClip,
                         paramFloat1 = aRef.UnknownFloat1,
                         paramFloat2 = aRef.UnknownFloat2,
                         paramFloat3 = aRef.UnknownFloat3,
                         paramFloat4 = aRef.UnknownFloat4,
                         paramFloat5 = aRef.UnknownFloat5,
                         paramFloat6 = aRef.UnknownFloat6
-                    };
-
-                    // A. Resolve Bone Animation from obj_param (Deduplicated)
-                    if (!string.IsNullOrEmpty(aRef.BoneAnimName))
-                    {
-                        string bKey = aRef.BoneAnimName.Trim();
-                        if (loadedClipCache.TryGetValue(bKey, out AnimationClip cachedClip))
-                        {
-                            entryData.boneClip = cachedClip;
-                            if (mainNodeClip == null) mainNodeClip = cachedClip;
-                        }
-                        else
-                        {
-                            string boneAnimPath = RelFolderResolver.FindAnimationFilePath(bKey, stageContext.BaseDirectory, false);
-                            if (!string.IsNullOrEmpty(boneAnimPath))
-                            {
-                                try
-                                {
-                                    NinjaNext animLoader = new NinjaNext();
-                                    animLoader.Load(boneAnimPath);
-                                    if (animLoader.Data.Motion != null)
-                                    {
-                                        ctx.DependsOnSourceAsset(boneAnimPath);
-                                        string clipId = $"Anim_{bKey}";
-                                        AnimationClip paramClip = NinjaMotionResolver.ResolveMotion(animLoader.Data.Motion, clipId, scale, rootGO, nodeTransforms, importMode);
-                                        if (paramClip != null)
-                                        {
-                                            if (loadedClipNames.Add(paramClip.name))
-                                            {
-                                                ctx.AddObjectToAsset(clipId, paramClip);
-                                                loadedClips.Add(paramClip);
-                                            }
-                                            loadedClipCache[bKey] = paramClip;
-                                            entryData.boneClip = paramClip;
-                                            if (mainNodeClip == null) mainNodeClip = paramClip;
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.LogWarning($"[NinjaAnimatorResolver] Could not load bone anim {boneAnimPath}: {ex.Message}");
-                                }
-                            }
-                        }
-                    }
-
-                    // B. Resolve Material Animation from obj_param (Deduplicated)
-                    if (!string.IsNullOrEmpty(aRef.TexAnimName))
-                    {
-                        string tKey = aRef.TexAnimName.Trim();
-                        if (loadedClipCache.TryGetValue(tKey, out AnimationClip cachedMatClip))
-                        {
-                            entryData.materialClip = cachedMatClip;
-                            if (mainMatClip == null) mainMatClip = cachedMatClip;
-                        }
-                        else
-                        {
-                            string texAnimPath = RelFolderResolver.FindAnimationFilePath(tKey, stageContext.BaseDirectory, true);
-                            if (!string.IsNullOrEmpty(texAnimPath))
-                            {
-                                try
-                                {
-                                    NinjaNext animLoader = new NinjaNext();
-                                    animLoader.Load(texAnimPath);
-                                    NinjaMotion foundMatMot = animLoader.Data.MaterialMotion ?? animLoader.Data.Motion;
-                                    if (foundMatMot != null)
-                                    {
-                                        ctx.DependsOnSourceAsset(texAnimPath);
-                                        string clipId = $"MatAnim_{tKey}";
-                                        AnimationClip paramMatClip = NinjaMotionResolver.ResolveMotion(foundMatMot, clipId, scale, rootGO, nodeTransforms, importMode);
-                                        if (paramMatClip != null)
-                                        {
-                                            if (loadedClipNames.Add(paramMatClip.name))
-                                            {
-                                                ctx.AddObjectToAsset(clipId, paramMatClip);
-                                                loadedClips.Add(paramMatClip);
-                                            }
-                                            loadedClipCache[tKey] = paramMatClip;
-                                            entryData.materialClip = paramMatClip;
-                                            if (mainMatClip == null) mainMatClip = paramMatClip;
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.LogWarning($"[NinjaAnimatorResolver] Could not load material anim {texAnimPath}: {ex.Message}");
-                                }
-                            }
-                        }
-                    }
-
-                    animMeta.animations.Add(entryData);
+                    });
                 }
             }
 
-            // 3. Attach Animator Component
+            // 3. Attach Animator & Controller Auto-Setup
             if (loadedClips.Count > 0)
             {
                 Animator animator = rootGO.AddComponent<Animator>();
+                bool isSingleAnim = distinctBoneFiles.Count <= 1 && distinctTexFiles.Count <= 1;
 
-                // 4. Optional 2-Layer Controller Auto-Setup
-                bool isSingleAnimAsset = distinctBoneFiles.Count <= 1 && distinctTexFiles.Count <= 1;
-
-                if (generateController && isSingleAnimAsset && (mainNodeClip != null || mainMatClip != null))
+                if (generateController && isSingleAnim && (mainNodeClip != null || mainMatClip != null))
                 {
                     BuildTwoLayerAnimatorController(assetName, mainNodeClip, mainMatClip, animator, ctx);
                 }
@@ -207,8 +160,7 @@ namespace SilentTools
 
         public static bool CanGenerateAnimatorController(string assetPath, out int distinctBoneCount, out int distinctTexCount)
         {
-            distinctBoneCount = 0;
-            distinctTexCount = 0;
+            distinctBoneCount = 0; distinctTexCount = 0;
             if (string.IsNullOrEmpty(assetPath)) return true;
 
             string assetName = Path.GetFileNameWithoutExtension(assetPath);
@@ -217,18 +169,18 @@ namespace SilentTools
 
             if (!matchedParam.HasValue) return true;
 
-            HashSet<string> distinctBoneFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            HashSet<string> distinctTexFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> distinctBones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> distinctTexs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var a in matchedParam.Value.Value.Animations)
             {
-                if (!string.IsNullOrEmpty(a.BoneAnimName)) distinctBoneFiles.Add(a.BoneAnimName.Trim());
-                if (!string.IsNullOrEmpty(a.TexAnimName)) distinctTexFiles.Add(a.TexAnimName.Trim());
+                if (!string.IsNullOrEmpty(a.BoneAnimName)) distinctBones.Add(a.BoneAnimName.Trim());
+                if (!string.IsNullOrEmpty(a.TexAnimName)) distinctTexs.Add(a.TexAnimName.Trim());
             }
 
-            distinctBoneCount = distinctBoneFiles.Count;
-            distinctTexCount = distinctTexFiles.Count;
-            return distinctBoneFiles.Count <= 1 && distinctTexFiles.Count <= 1;
+            distinctBoneCount = distinctBones.Count;
+            distinctTexCount = distinctTexs.Count;
+            return distinctBones.Count <= 1 && distinctTexs.Count <= 1;
         }
 
         private static void BuildTwoLayerAnimatorController(
@@ -238,60 +190,33 @@ namespace SilentTools
             Animator animator,
             AssetImportContext ctx)
         {
-            AnimatorController controller = new AnimatorController();
-            controller.name = $"{assetName}_Controller";
+            AnimatorController controller = new AnimatorController { name = $"{assetName}_Controller" };
             ctx.AddObjectToAsset("AnimatorController", controller);
 
-            // Layer 0: Base Layer (Node / Transform Animation)
-            if (mainNodeClip != null)
+            void AddControllerLayer(string layerName, string statePrefix, AnimationClip clip, float weight)
             {
-                controller.AddLayer("Base Layer");
-                AnimatorStateMachine baseSM = controller.layers[0].stateMachine;
-                if (baseSM != null)
+                if (clip == null) return;
+                int idx = controller.layers.Length;
+                controller.AddLayer(layerName);
+                if (idx > 0)
                 {
-                    ctx.AddObjectToAsset("BaseStateMachine", baseSM);
-                    AnimatorState nodeState = baseSM.AddState(mainNodeClip.name);
-                    nodeState.motion = mainNodeClip;
-                    baseSM.defaultState = nodeState;
-                    ctx.AddObjectToAsset("NodeState", nodeState);
-                }
-            }
-
-            // Layer 1: Material Layer (Material / UV Animation)
-            if (mainMatClip != null)
-            {
-                int layerIdx = controller.layers.Length;
-                if (layerIdx == 0)
-                {
-                    controller.AddLayer("Material Layer");
-                    AnimatorStateMachine matSM = controller.layers[0].stateMachine;
-                    if (matSM != null)
-                    {
-                        ctx.AddObjectToAsset("MatStateMachine", matSM);
-                        AnimatorState matState = matSM.AddState(mainMatClip.name);
-                        matState.motion = mainMatClip;
-                        matSM.defaultState = matState;
-                        ctx.AddObjectToAsset("MatState", matState);
-                    }
-                }
-                else
-                {
-                    controller.AddLayer("Material Layer");
-                    AnimatorControllerLayer[] layers = controller.layers;
-                    layers[layerIdx].defaultWeight = 1.0f; // Simultaneous evaluation with Base Layer
+                    var layers = controller.layers;
+                    layers[idx].defaultWeight = weight;
                     controller.layers = layers;
-
-                    AnimatorStateMachine matSM = controller.layers[layerIdx].stateMachine;
-                    if (matSM != null)
-                    {
-                        ctx.AddObjectToAsset("MatStateMachine", matSM);
-                        AnimatorState matState = matSM.AddState(mainMatClip.name);
-                        matState.motion = mainMatClip;
-                        matSM.defaultState = matState;
-                        ctx.AddObjectToAsset("MatState", matState);
-                    }
+                }
+                AnimatorStateMachine sm = controller.layers[idx].stateMachine;
+                if (sm != null)
+                {
+                    ctx.AddObjectToAsset($"{statePrefix}StateMachine", sm);
+                    AnimatorState st = sm.AddState(clip.name);
+                    st.motion = clip;
+                    sm.defaultState = st;
+                    ctx.AddObjectToAsset($"{statePrefix}State", st);
                 }
             }
+
+            AddControllerLayer("Base Layer", "Node", mainNodeClip, 1.0f);
+            AddControllerLayer("Material Layer", "Mat", mainMatClip, 1.0f);
 
             animator.runtimeAnimatorController = controller;
         }

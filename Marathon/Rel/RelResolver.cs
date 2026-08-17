@@ -7,24 +7,35 @@ using Marathon.IO;
 
 namespace SilentTools
 {
+    /// <summary>
+    /// Core resolver and dispatcher for Phantasy Star Universe REL/XNR stage layout, environment,
+    /// collision, and parameter binary files.
+    /// </summary>
     public static class RelResolver
     {
+        #region Offset Resolution & Address Rebasing
+        /// <summary>
+        /// Attempts to resolve a raw memory or file pointer to a valid file-relative offset.
+        /// Handles base address rebasing when files contain dumped runtime memory pointers.
+        /// </summary>
         public static bool TryResolveOffset(int ptr, uint fileSize, uint baseAddr, out uint resolvedOffset)
         {
             resolvedOffset = 0;
             if (ptr <= 0) return false;
             uint uPtr = (uint)ptr;
 
+            // Rebase runtime memory address against computed base address
             if (baseAddr != 0 && uPtr >= baseAddr)
             {
-                uint resolved = uPtr - baseAddr;
-                if (resolved < fileSize)
+                uint rebased = uPtr - baseAddr;
+                if (rebased < fileSize)
                 {
-                    resolvedOffset = resolved;
+                    resolvedOffset = rebased;
                     return true;
                 }
             }
 
+            // Direct file-relative offset within bounds
             if (uPtr < fileSize)
             {
                 resolvedOffset = uPtr;
@@ -34,60 +45,88 @@ namespace SilentTools
             return false;
         }
 
+        /// <summary>
+        /// Resolves a pointer to a file-relative offset, returning 0 if invalid or out of bounds.
+        /// </summary>
         public static uint ResolveOffset(int ptr, uint fileSize, uint baseAddr = 0)
         {
-            if (TryResolveOffset(ptr, fileSize, baseAddr, out uint resolved))
-            {
-                return resolved;
-            }
-            return 0;
+            return TryResolveOffset(ptr, fileSize, baseAddr, out uint resolved) ? resolved : 0;
         }
+        #endregion
 
+        #region Format Identification & Type Detection
+        /// <summary>
+        /// Identifies the specific REL/XNR file type from its filename or byte heuristics.
+        /// </summary>
         public static RelFileType IdentifyRelType(string filename, byte[] rawData)
         {
-            string lowerName = string.IsNullOrEmpty(filename) ? "" : filename.ToLowerInvariant();
+            string name = string.IsNullOrEmpty(filename) ? "" : filename.ToLowerInvariant();
 
-            if (lowerName.Equals("filelist.rel") || lowerName.Equals("filelist.xnr"))
+            if (name == "filelist.rel" || name == "filelist.xnr")
                 return RelFileType.QuestList;
-            if (lowerName.Contains("filelist") || lowerName.Contains("scene_filelist"))
+
+            if (name.Contains("filelist") || name.Contains("scene_filelist"))
                 return RelFileType.FileList;
-            if (lowerName.Contains("collision") || lowerName.Contains("colli") || lowerName.EndsWith("col.rel") || lowerName.EndsWith("col.xnr"))
+
+            if (name.Contains("collision") || name.Contains("colli") || 
+                name.EndsWith("col.rel") || name.EndsWith("col.xnr") || name.EndsWith(".nxr"))
                 return RelFileType.Collision;
-            if (lowerName.Contains("set") || lowerName.Contains("layout"))
+
+            if (name.Contains("set") || name.Contains("layout"))
                 return RelFileType.SetLayout;
-            if (lowerName.Contains("effect") || lowerName.Contains("env"))
+
+            if (name.Contains("effect") || name.Contains("env"))
                 return RelFileType.LndEffect;
-            if (lowerName.Contains("enemylight") || lowerName.Contains("enemy_light"))
+
+            if (name.Contains("enemylight") || name.Contains("enemy_light"))
                 return RelFileType.LndEnemyLight;
-            if (lowerName.Contains("fogbank") || lowerName.Contains("fog_bank"))
+
+            if (name.Contains("fogbank") || name.Contains("fog_bank"))
                 return RelFileType.FogBank;
-            if (lowerName.Contains("common"))
+
+            if (name.Contains("common"))
                 return RelFileType.LndCommon;
-            if (lowerName.Contains("block") || lowerName.Contains("route"))
+
+            if (name.Contains("block") || name.Contains("route"))
                 return RelFileType.StageRouteBlock;
-            if (lowerName.Contains("questlist"))
+
+            if (name.Contains("questlist"))
                 return RelFileType.QuestList;
-            if (lowerName.StartsWith("obj_particle_info") || lowerName.Contains("particle_info"))
+
+            if (name.StartsWith("obj_particle_info") || name.Contains("particle_info"))
                 return RelFileType.ObjectParticleInfo;
-            if (lowerName.Contains("obj_param") || lowerName.Contains("npc_param") || lowerName.Contains("object_param"))
+
+            if (name.Contains("obj_param") || name.Contains("npc_param") || name.Contains("object_param"))
                 return RelFileType.ObjectParam;
 
-            if ((lowerName.StartsWith("enemy") || lowerName.Contains("param") || lowerName.Contains("data") || lowerName.Contains("drop") || lowerName.Contains("atk") || lowerName.Contains("spawn")) &&
-                (lowerName.EndsWith(".rel") || lowerName.EndsWith(".xnr") || lowerName.EndsWith(".gnr") || lowerName.EndsWith(".znr")))
+            if ((name.StartsWith("enemy") || name.Contains("param") || name.Contains("data") || 
+                 name.Contains("drop") || name.Contains("atk") || name.Contains("spawn")) &&
+                (name.EndsWith(".rel") || name.EndsWith(".xnr") || name.EndsWith(".gnr") || name.EndsWith(".znr")))
+            {
                 return RelFileType.EnemyLayout;
+            }
 
             return DetectRelTypeFromData(rawData);
         }
 
+        /// <summary>
+        /// Probes raw binary bytes to infer the REL/XNR format type when the filename is ambiguous.
+        /// </summary>
         public static RelFileType DetectRelTypeFromData(byte[] rawData)
         {
             if (rawData == null || rawData.Length < 16) return RelFileType.Unknown;
 
-            // Check for primitive collision signatures ("qua\0" or "tri\0")
+            // 1. Direct NXR Collision header checks
+            if ((rawData[0] == 'N' && rawData[1] == 'X' && rawData[2] == 'R' && rawData[3] == 0) ||
+                (rawData.Length >= 0x64 && rawData[0x60] == 'N' && rawData[0x61] == 'X' && rawData[0x62] == 'R' && rawData[0x63] == 0))
+            {
+                return RelFileType.Collision;
+            }
+
+            // 2. Collision 'qua\0' anchor marker search
             for (int i = 0; i < rawData.Length - 4; i++)
             {
-                if ((rawData[i] == 0x71 && rawData[i + 1] == 0x75 && rawData[i + 2] == 0x61 && rawData[i + 3] == 0x00) ||
-                    (rawData[i] == 0x74 && rawData[i + 1] == 0x72 && rawData[i + 2] == 0x69 && rawData[i + 3] == 0x00))
+                if (rawData[i] == 0x71 && rawData[i + 1] == 0x75 && rawData[i + 2] == 0x61 && rawData[i + 3] == 0)
                 {
                     return RelFileType.Collision;
                 }
@@ -102,10 +141,11 @@ namespace SilentTools
                 uint fileSize = (uint)payload.Length;
 
                 reader.JumpTo(4);
-                uint rawFileSizeField = reader.ReadUInt32();
+                uint rawSize = reader.ReadUInt32();
                 uint headerLoc = reader.ReadUInt32();
 
-                if ((rawFileSizeField & 0xFF000000) != 0 || headerLoc > payload.Length)
+                // Detect Big-Endian files
+                if ((rawSize & 0xFF000000) != 0 || headerLoc > payload.Length)
                 {
                     reader.IsBigEndian = true;
                     reader.JumpTo(8);
@@ -113,152 +153,124 @@ namespace SilentTools
                 }
 
                 uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
+                if (headerLoc + 4 > fileSize) return RelFileType.Unknown;
 
-                if (headerLoc + 4 <= fileSize)
+                reader.JumpTo(headerLoc);
+
+                // Check 1: 16-Category FileList (*filelist.rel)
+                int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
+                for (int i = 0; i < maxCategories; i++)
                 {
-                    reader.JumpTo(headerLoc);
+                    if (reader.BaseStream.Position + 4 > fileSize) break;
+                    int catPtr = reader.ReadInt32();
 
-                    // 1. Test 16-Category FileList (*filelist.rel)
-                    int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
-                    int activeCatCount = 0;
-                    for (int i = 0; i < maxCategories; i++)
+                    if (catPtr > 0 && TryResolveOffset(catPtr, fileSize, baseAddr, out uint resCatPtr) && resCatPtr + 8 <= fileSize)
                     {
-                        if (reader.BaseStream.Position + 4 > fileSize) break;
-                        int catPtr = reader.ReadInt32();
-                        if (catPtr > 0 && TryResolveOffset(catPtr, fileSize, baseAddr, out uint resCatPtr))
-                        {
-                            if (resCatPtr + 8 <= fileSize)
-                            {
-                                long prevPos = reader.BaseStream.Position;
-                                reader.JumpTo(resCatPtr);
-                                int cSize = reader.ReadInt32();
-                                int cAddr = reader.ReadInt32();
-                                reader.JumpTo(prevPos);
+                        long savedPos = reader.BaseStream.Position;
+                        reader.JumpTo(resCatPtr);
+                        int listSize = reader.ReadInt32();
+                        int listAddr = reader.ReadInt32();
+                        reader.JumpTo(savedPos);
 
-                                if (cSize > 0 && cSize < 5000 && TryResolveOffset(cAddr, fileSize, baseAddr, out _))
-                                {
-                                    activeCatCount++;
-                                }
-                            }
+                        if (listSize > 0 && listSize < 5000 && TryResolveOffset(listAddr, fileSize, baseAddr, out _))
+                        {
+                            return RelFileType.FileList;
                         }
                     }
-                    if (activeCatCount >= 1)
+                }
+
+                // Check 2: ObjectParticleInfo
+                reader.JumpTo(headerLoc);
+                int partListPtr = reader.ReadInt32();
+                int partCount = reader.ReadInt32();
+                if (partCount > 0 && partCount < 1000 && TryResolveOffset(partListPtr, fileSize, baseAddr, out uint resPartPtr) && resPartPtr + 20 <= fileSize)
+                {
+                    reader.JumpTo(resPartPtr);
+                    int testIdx = reader.ReadInt32();
+                    int testNamePtr = reader.ReadInt32();
+                    int testFilePtr = reader.ReadInt32();
+                    if (testIdx >= 0 && testIdx < 5000 && 
+                        TryResolveOffset(testNamePtr, fileSize, baseAddr, out _) && 
+                        TryResolveOffset(testFilePtr, fileSize, baseAddr, out _))
                     {
-                        return RelFileType.FileList;
+                        return RelFileType.ObjectParticleInfo;
                     }
+                }
 
-                    // 2. Test ObjectParticleInfo
-                    reader.JumpTo(headerLoc);
-                    int partListPtr = reader.ReadInt32();
-                    int partCount = reader.ReadInt32();
-                    if (partCount > 0 && partCount < 1000 && TryResolveOffset(partListPtr, fileSize, baseAddr, out uint resPartListPtr))
+                // Check 3: ObjectParam
+                reader.JumpTo(headerLoc);
+                int objCount = reader.ReadInt32();
+                int tocPtr = reader.ReadInt32();
+                if (objCount > 0 && objCount < 1000 && TryResolveOffset(tocPtr, fileSize, baseAddr, out uint resTocPtr) && resTocPtr + 8 <= fileSize)
+                {
+                    reader.JumpTo(resTocPtr);
+                    int testObjId = reader.ReadInt32();
+                    int testObjPtr = reader.ReadInt32();
+                    if (testObjId >= 0 && testObjId < 10000 && TryResolveOffset(testObjPtr, fileSize, baseAddr, out _))
                     {
-                        if (resPartListPtr + 20 <= fileSize)
-                        {
-                            reader.JumpTo(resPartListPtr);
-                            int testIdx = reader.ReadInt32();
-                            int testNamePtr = reader.ReadInt32();
-                            int testFilePtr = reader.ReadInt32();
-                            if (testIdx >= 0 && testIdx < 5000 &&
-                                TryResolveOffset(testNamePtr, fileSize, baseAddr, out _) &&
-                                TryResolveOffset(testFilePtr, fileSize, baseAddr, out _))
-                            {
-                                return RelFileType.ObjectParticleInfo;
-                            }
-                        }
+                        return RelFileType.ObjectParam;
                     }
+                }
 
-                    // 3. Test ObjectParam
-                    reader.JumpTo(headerLoc);
-                    int objCount = reader.ReadInt32();
-                    int tocPtr = reader.ReadInt32();
-                    if (objCount > 0 && objCount < 1000 && TryResolveOffset(tocPtr, fileSize, baseAddr, out uint resTocPtr))
+                // Check 4: SetLayout (Area ID + Map Count)
+                reader.JumpTo(headerLoc);
+                short areaId = reader.ReadInt16();
+                short mapCount = reader.ReadInt16();
+                int mainListPtr = reader.ReadInt32();
+                if (mapCount > 0 && mapCount < 100 && TryResolveOffset(mainListPtr, fileSize, baseAddr, out uint resMainPtr) && resMainPtr + 8 <= fileSize)
+                {
+                    reader.JumpTo(resMainPtr);
+                    reader.ReadInt16(); // mapNumber
+                    short listCount = reader.ReadInt16();
+                    int listPtr = reader.ReadInt32();
+                    if (listCount >= 0 && listCount < 200 && TryResolveOffset(listPtr, fileSize, baseAddr, out _))
                     {
-                        if (resTocPtr + 8 <= fileSize)
-                        {
-                            reader.JumpTo(resTocPtr);
-                            int testObjId = reader.ReadInt32();
-                            int testObjPtr = reader.ReadInt32();
-                            if (testObjId >= 0 && testObjId < 10000 && TryResolveOffset(testObjPtr, fileSize, baseAddr, out _))
-                            {
-                                return RelFileType.ObjectParam;
-                            }
-                        }
+                        return RelFileType.SetLayout;
                     }
+                }
 
-                    // 4. Test SetLayout
-                    reader.JumpTo(headerLoc);
-                    short areaID = reader.ReadInt16();
-                    short mapCount = reader.ReadInt16();
-                    int mainListPtr = reader.ReadInt32();
+                // Check 5: EnemyLayout
+                reader.JumpTo(headerLoc);
+                int eListPtr = reader.ReadInt32();
+                int eListCount = reader.ReadInt32();
+                if (eListCount > 0 && eListCount < 500 && TryResolveOffset(eListPtr, fileSize, baseAddr, out uint resEPtr) && resEPtr + 24 <= fileSize)
+                {
+                    return RelFileType.EnemyLayout;
+                }
 
-                    if (mapCount > 0 && mapCount < 100 && TryResolveOffset(mainListPtr, fileSize, baseAddr, out uint resMainListPtr))
+                // Check 6: LndEffect vs LndEnemyLight
+                reader.JumpTo(headerLoc);
+                int p1 = reader.ReadInt32();
+                int p2 = reader.ReadInt32();
+                int p3 = reader.ReadInt32();
+                int p4 = reader.ReadInt32();
+                if (TryResolveOffset(p1, fileSize, baseAddr, out _) && 
+                    TryResolveOffset(p2, fileSize, baseAddr, out _) && 
+                    TryResolveOffset(p3, fileSize, baseAddr, out _))
+                {
+                    return (p4 != 0 && TryResolveOffset(p4, fileSize, baseAddr, out _)) 
+                        ? RelFileType.LndEffect 
+                        : RelFileType.LndEnemyLight;
+                }
+
+                // Check 7: FogBank
+                if (headerLoc >= 0x2C && (headerLoc - 0x10) % 28 == 0)
+                {
+                    return RelFileType.FogBank;
+                }
+
+                // Check 8: QuestList
+                reader.JumpTo(headerLoc);
+                int qListPtr = reader.ReadInt32();
+                int qCount = reader.ReadInt32();
+                if (qCount > 0 && qCount < 1000 && TryResolveOffset(qListPtr, fileSize, baseAddr, out uint resQPtr) && resQPtr + 8 <= fileSize)
+                {
+                    reader.JumpTo(resQPtr);
+                    reader.ReadInt32(); // QuestNumber
+                    int strPtr = reader.ReadInt32();
+                    if (TryResolveOffset(strPtr, fileSize, baseAddr, out _))
                     {
-                        if (resMainListPtr + 8 <= fileSize)
-                        {
-                            reader.JumpTo(resMainListPtr);
-                            reader.ReadInt16(); // mapNumber
-                            short listCount = reader.ReadInt16();
-                            int listPtr = reader.ReadInt32();
-                            if (listCount >= 0 && listCount < 200 && TryResolveOffset(listPtr, fileSize, baseAddr, out _))
-                            {
-                                return RelFileType.SetLayout;
-                            }
-                        }
-                    }
-
-                    // 5. Test EnemyLayout
-                    reader.JumpTo(headerLoc);
-                    int eListPtr = reader.ReadInt32();
-                    int eListCount = reader.ReadInt32();
-
-                    if (eListCount > 0 && eListCount < 500 && TryResolveOffset(eListPtr, fileSize, baseAddr, out uint resEListPtr))
-                    {
-                        if (resEListPtr + 24 <= fileSize)
-                        {
-                            return RelFileType.EnemyLayout;
-                        }
-                    }
-
-                    // 6. Test LndEffect vs LndEnemyLight
-                    reader.JumpTo(headerLoc);
-                    int p1 = reader.ReadInt32();
-                    int p2 = reader.ReadInt32();
-                    int p3 = reader.ReadInt32();
-                    int p4 = reader.ReadInt32();
-
-                    if (TryResolveOffset(p1, fileSize, baseAddr, out _) &&
-                        TryResolveOffset(p2, fileSize, baseAddr, out _) &&
-                        TryResolveOffset(p3, fileSize, baseAddr, out _))
-                    {
-                        if (p4 != 0 && TryResolveOffset(p4, fileSize, baseAddr, out _))
-                            return RelFileType.LndEffect;
-                        else
-                            return RelFileType.LndEnemyLight;
-                    }
-
-                    // 7. Test FogBank
-                    if (headerLoc >= 0x2C && (headerLoc - 0x10) % 28 == 0)
-                    {
-                        return RelFileType.FogBank;
-                    }
-
-                    // 8. Test QuestList
-                    reader.JumpTo(headerLoc);
-                    int qListPtr = reader.ReadInt32();
-                    int qCount = reader.ReadInt32();
-                    if (qCount > 0 && qCount < 1000 && TryResolveOffset(qListPtr, fileSize, baseAddr, out uint resQListPtr))
-                    {
-                        if (resQListPtr + 8 <= fileSize)
-                        {
-                            reader.JumpTo(resQListPtr);
-                            reader.ReadInt32(); // QuestNumber
-                            int strPtr = reader.ReadInt32();
-                            if (TryResolveOffset(strPtr, fileSize, baseAddr, out _))
-                            {
-                                return RelFileType.QuestList;
-                            }
-                        }
+                        return RelFileType.QuestList;
                     }
                 }
             }
@@ -266,6 +278,9 @@ namespace SilentTools
             return RelFileType.Unknown;
         }
 
+        /// <summary>
+        /// Strips outer NXIF container headers if present, returning the pure REL/NXR payload bytes.
+        /// </summary>
         private static byte[] ExtractPayload(byte[] rawData)
         {
             if (rawData == null || rawData.Length < 16) return rawData;
@@ -273,10 +288,10 @@ namespace SilentTools
             using (MemoryStream stream = new MemoryStream(rawData))
             {
                 BinaryReaderEx reader = new BinaryReaderEx(stream);
-                string sig = new string(reader.ReadChars(4));
+                string signature = new string(reader.ReadChars(4));
                 long containerStart = -1;
 
-                if (sig == "NXIF" || sig.EndsWith("IF"))
+                if (signature == "NXIF" || signature.EndsWith("IF"))
                 {
                     containerStart = 0;
                 }
@@ -312,57 +327,53 @@ namespace SilentTools
                     }
                 }
             }
-
             return rawData;
         }
 
+        /// <summary>
+        /// Calculates the base memory address used for absolute pointer rebasing.
+        /// </summary>
         private static uint ComputeBaseAddress(BinaryReaderEx reader, uint headerLoc, uint fileSize)
         {
             uint baseAddr = 0;
-            if (headerLoc > fileSize)
-            {
-                baseAddr = headerLoc - 0x10;
-            }
-            else if (headerLoc + 4 <= fileSize)
-            {
-                reader.JumpTo(headerLoc);
-                int ptrVal1 = reader.ReadInt32();
-                int ptrVal2 = reader.BaseStream.Position + 4 <= fileSize ? reader.ReadInt32() : 0;
+            if (headerLoc > fileSize) return headerLoc - 0x10;
 
-                // 1. Check 16-category FileList (*filelist.rel)
-                int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
+            if (headerLoc + 4 <= fileSize)
+            {
                 reader.JumpTo(headerLoc);
-                int firstValidTopPtr = 0;
-                for (int i = 0; i < maxCategories; i++)
+                int p1 = reader.ReadInt32();
+                int p2 = reader.BaseStream.Position + 4 <= fileSize ? reader.ReadInt32() : 0;
+
+                // FileList probing
+                int maxCat = Math.Min(16, (int)((fileSize - headerLoc) / 4));
+                reader.JumpTo(headerLoc);
+                int firstTopPtr = 0;
+                for (int i = 0; i < maxCat; i++)
                 {
                     int p = reader.ReadInt32();
-                    if (firstValidTopPtr == 0 && p > (int)fileSize && p < 0x0FFFFFFF)
-                    {
-                        firstValidTopPtr = p;
-                    }
+                    if (firstTopPtr == 0 && p > (int)fileSize && p < 0x0FFFFFFF) firstTopPtr = p;
                 }
 
-                if (firstValidTopPtr != 0)
+                if (firstTopPtr != 0)
                 {
                     for (int backStep = 8; backStep <= 0x100; backStep += 8)
                     {
-                        int catOffset = (int)headerLoc - backStep;
-                        if (catOffset >= 0x10)
+                        int catOff = (int)headerLoc - backStep;
+                        if (catOff >= 0x10)
                         {
-                            uint candBase = (uint)firstValidTopPtr - (uint)catOffset;
-                            if (candBase % 16 == 0 && ((uint)firstValidTopPtr - candBase) < fileSize)
+                            uint candidate = (uint)firstTopPtr - (uint)catOff;
+                            if (candidate % 16 == 0 && ((uint)firstTopPtr - candidate) < fileSize)
                             {
-                                reader.JumpTo(catOffset);
-                                int cSize = reader.ReadInt32();
-                                int cAddr = reader.ReadInt32();
-                                if (cSize > 0 && cSize < 5000)
+                                reader.JumpTo(catOff);
+                                int listSize = reader.ReadInt32();
+                                int listAddr = reader.ReadInt32();
+                                if (listSize > 0 && listSize < 5000)
                                 {
-                                    uint cLoc = (uint)cAddr >= candBase ? (uint)cAddr - candBase : (uint)cAddr;
+                                    uint cLoc = (uint)listAddr >= candidate ? (uint)listAddr - candidate : (uint)listAddr;
                                     if (cLoc > 0 && cLoc < fileSize)
                                     {
-                                        baseAddr = candBase;
-                                        reader.Offset = baseAddr;
-                                        return baseAddr;
+                                        reader.Offset = candidate;
+                                        return candidate;
                                     }
                                 }
                             }
@@ -370,64 +381,63 @@ namespace SilentTools
                     }
                 }
 
-                // 2. Pattern A: Count at headerLoc, Pointer to Table of Contents following (ObjectParam)
-                if (ptrVal1 > 0 && ptrVal1 <= 5000 && ptrVal2 > (int)fileSize && ptrVal2 < 0x0FFFFFFF)
+                // ObjectParam: count at headerLoc, TOC pointer follows
+                if (p1 > 0 && p1 <= 5000 && p2 > (int)fileSize && p2 < 0x0FFFFFFF)
                 {
-                    int tocOffset = (int)headerLoc - ptrVal1 * 8;
-                    if (tocOffset >= 0x10 && (uint)ptrVal2 >= (uint)tocOffset)
+                    int tocOff = (int)headerLoc - p1 * 8;
+                    if (tocOff >= 0x10 && (uint)p2 >= (uint)tocOff)
                     {
-                        uint candidateBase = (uint)ptrVal2 - (uint)tocOffset;
-                        if (candidateBase % 16 == 0 && ((uint)ptrVal2 - candidateBase) < fileSize)
+                        uint candidate = (uint)p2 - (uint)tocOff;
+                        if (candidate % 16 == 0 && ((uint)p2 - candidate) < fileSize)
                         {
-                            baseAddr = candidateBase;
-                            reader.Offset = baseAddr;
-                            return baseAddr;
+                            reader.Offset = candidate;
+                            return candidate;
                         }
                     }
                 }
 
-                // 3. Pattern B: Pointer to List at headerLoc, Count following (ObjectParticleInfo)
-                if (ptrVal2 > 0 && ptrVal2 <= 5000 && ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
+                // ObjectParticleInfo: pointer at headerLoc, count follows
+                if (p2 > 0 && p2 <= 5000 && p1 > (int)fileSize && p1 < 0x0FFFFFFF)
                 {
-                    int listOffset = (int)headerLoc - ptrVal2 * 20;
-                    if (listOffset >= 0x10 && (uint)ptrVal1 >= (uint)listOffset)
+                    int listOff = (int)headerLoc - p2 * 20;
+                    if (listOff >= 0x10 && (uint)p1 >= (uint)listOff)
                     {
-                        uint candidateBase = (uint)ptrVal1 - (uint)listOffset;
-                        if (candidateBase % 16 == 0 && ((uint)ptrVal1 - candidateBase) < fileSize)
+                        uint candidate = (uint)p1 - (uint)listOff;
+                        if (candidate % 16 == 0 && ((uint)p1 - candidate) < fileSize)
                         {
-                            baseAddr = candidateBase;
-                            reader.Offset = baseAddr;
-                            return baseAddr;
+                            reader.Offset = candidate;
+                            return candidate;
                         }
                     }
                 }
 
-                // 4. Standard Direct Offset Deduction
-                if (ptrVal1 > (int)fileSize && ptrVal1 < 0x0FFFFFFF)
+                // Direct base deduction
+                if (p1 > (int)fileSize && p1 < 0x0FFFFFFF)
                 {
-                    uint candidateBase = (uint)ptrVal1 - 0x10;
-                    if (candidateBase % 16 == 0 && (uint)ptrVal1 >= candidateBase && ((uint)ptrVal1 - candidateBase) < fileSize)
-                    {
-                        baseAddr = candidateBase;
-                    }
+                    uint candidate = (uint)p1 - 0x10;
+                    if (candidate % 16 == 0 && (uint)p1 >= candidate && ((uint)p1 - candidate) < fileSize)
+                        baseAddr = candidate;
                 }
-                else if (ptrVal2 > (int)fileSize && ptrVal2 < 0x0FFFFFFF)
+                else if (p2 > (int)fileSize && p2 < 0x0FFFFFFF)
                 {
-                    uint candidateBase = (uint)ptrVal2 - 0x10;
-                    if (candidateBase % 16 == 0 && (uint)ptrVal2 >= candidateBase && ((uint)ptrVal2 - candidateBase) < fileSize)
-                    {
-                        baseAddr = candidateBase;
-                    }
+                    uint candidate = (uint)p2 - 0x10;
+                    if (candidate % 16 == 0 && (uint)p2 >= candidate && ((uint)p2 - candidate) < fileSize)
+                        baseAddr = candidate;
                 }
             }
+
             reader.Offset = baseAddr;
             return baseAddr;
         }
+        #endregion
 
+        #region Parsing Pipeline
+        /// <summary>
+        /// Parses raw REL/XNR bytes into strongly typed data models.
+        /// </summary>
         public static object ParseRelBytes(byte[] rawData, string filename, out RelFileType relType)
         {
             relType = IdentifyRelType(filename, rawData);
-
             byte[] payload = ExtractPayload(rawData);
 
             using (MemoryStream stream = new MemoryStream(payload))
@@ -435,10 +445,10 @@ namespace SilentTools
                 BinaryReaderEx reader = new BinaryReaderEx(stream);
                 reader.JumpTo(4);
                 uint fileSize = (uint)stream.Length;
-                uint rawFileSizeField = reader.ReadUInt32();
+                uint rawSize = reader.ReadUInt32();
                 uint headerLoc = reader.ReadUInt32();
 
-                if ((rawFileSizeField & 0xFF000000) != 0 || headerLoc > stream.Length)
+                if ((rawSize & 0xFF000000) != 0 || headerLoc > stream.Length)
                 {
                     reader.IsBigEndian = true;
                     reader.JumpTo(8);
@@ -446,19 +456,11 @@ namespace SilentTools
                 }
 
                 uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
+                if (headerLoc > fileSize) headerLoc = 0x10;
 
-                if (headerLoc > fileSize)
-                {
-                    headerLoc = 0x10;
-                }
-
-                reader.JumpTo(headerLoc);
-
+                // Test candidate parsers
                 List<RelFileType> typesToTry = new List<RelFileType>();
-                if (relType != RelFileType.Unknown)
-                {
-                    typesToTry.Add(relType);
-                }
+                if (relType != RelFileType.Unknown) typesToTry.Add(relType);
 
                 foreach (RelFileType t in Enum.GetValues(typeof(RelFileType)))
                 {
@@ -468,25 +470,25 @@ namespace SilentTools
                     }
                 }
 
-                foreach (RelFileType candidateType in typesToTry)
+                foreach (RelFileType candidate in typesToTry)
                 {
                     try
                     {
                         reader.JumpTo(headerLoc);
-                        object parsed = ExecuteParser(candidateType, reader, fileSize, baseAddr, headerLoc);
+                        object parsed = ExecuteParser(candidate, reader, fileSize, baseAddr, headerLoc);
                         if (parsed != null && IsNonEmptyRelData(parsed))
                         {
-                            relType = candidateType;
+                            relType = candidate;
                             return parsed;
                         }
                     }
-                    catch (Exception)
+                    catch
                     {
-                        // Try next candidate parser
+                        // Proceed to next parser candidate on failure
                     }
                 }
 
-                throw new InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized or corrupted format structure.");
+                throw new InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized or corrupted structure.");
             }
         }
 
@@ -527,28 +529,36 @@ namespace SilentTools
         {
             if (parsedData == null) return false;
             if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
-            if (parsedData is CollisionMeshData colData)
-                return colData.Vertices != null && colData.Vertices.Count > 0 && colData.Triangles != null && colData.Triangles.Count > 0;
+            if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0 && colData.Triangles != null && colData.Triangles.Count > 0;
             if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
             if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
             if (parsedData is ObjectParamData paramData) return paramData.ObjectDefinitions != null && paramData.ObjectDefinitions.Count > 0;
             if (parsedData is ObjectParticleInfoData partData) return partData.Entries != null && partData.Entries.Count > 0;
-            if (parsedData is LndEffectData effectData)
+            if (parsedData is LndEffectData effect)
             {
-                return (effectData.Fog != null && effectData.Fog.FarPlane > 0f) ||
-                       (effectData.PlayerLight1 != null && effectData.PlayerLight1.LightColor != Color.white) ||
-                       (effectData.TopGradient != null && effectData.TopGradient.EndHeight > 0f) ||
-                       effectData.SunPosition != Vector3.zero;
+                return (effect.Fog != null && effect.Fog.FarPlane > 0f) ||
+                       (effect.PlayerLight1 != null && effect.PlayerLight1.LightColor != Color.white) ||
+                       effect.SunPosition != Vector3.zero;
             }
             if (parsedData is List<LndFogData> fogs) return fogs != null && fogs.Count > 0;
-            if (parsedData is LndCommonData commonData) return !string.IsNullOrEmpty(commonData.NblFilenameFragment) || commonData.UnknownFloat != 0f;
-            if (parsedData is LndEnemyLightData enemyLight) return enemyLight != null && enemyLight.Light1 != null && enemyLight.Light1.LightColor != Color.white;
-            if (parsedData is List<QuestListingData> questList) return questList != null && questList.Count > 0;
-            if (parsedData is StageBlockRouteData routeData) return routeData != null && routeData.Offsets.Count > 0;
+            if (parsedData is LndCommonData common) return !string.IsNullOrEmpty(common.NblFilenameFragment) || common.UnknownFloat != 0f;
+            if (parsedData is LndEnemyLightData el) return el != null && el.Light1 != null && el.Light1.LightColor != Color.white;
+            if (parsedData is List<QuestListingData> ql) return ql != null && ql.Count > 0;
+            if (parsedData is StageBlockRouteData rd) return rd != null && rd.Offsets != null && rd.Offsets.Count > 0;
             return false;
         }
+        #endregion
 
-        public static GameObject ResolveRelAsset(object parsedData, RelFileType relType, string assetName, float scale = 0.05f, UnityEditor.AssetImporters.AssetImportContext ctx = null)
+        #region Unity Asset Resolution & Hierarchy Construction
+        /// <summary>
+        /// Builds a representative Unity GameObject hierarchy from parsed REL data.
+        /// </summary>
+        public static GameObject ResolveRelAsset(
+            object parsedData,
+            RelFileType relType,
+            string assetName,
+            float scale = 0.05f,
+            UnityEditor.AssetImporters.AssetImportContext ctx = null)
         {
             GameObject rootGO = new GameObject(assetName);
 
@@ -559,46 +569,62 @@ namespace SilentTools
                         BuildSetLayoutHierarchy(setData, rootGO, scale, ctx?.assetPath, ctx);
                     break;
                 case RelFileType.LndEffect:
-                    if (parsedData is LndEffectData effectData) BuildLndEffectHierarchy(effectData, rootGO);
+                    if (parsedData is LndEffectData effect)
+                        BuildLndEffectHierarchy(effect, rootGO);
                     break;
                 case RelFileType.LndEnemyLight:
-                    if (parsedData is LndEnemyLightData enemyLightData) BuildLndEnemyLightHierarchy(enemyLightData, rootGO);
+                    if (parsedData is LndEnemyLightData enemyLight)
+                        BuildLndEnemyLightHierarchy(enemyLight, rootGO);
                     break;
                 case RelFileType.FogBank:
-                    if (parsedData is List<LndFogData> fogs) BuildFogBankHierarchy(fogs, rootGO);
+                    if (parsedData is List<LndFogData> fogs)
+                        BuildFogBankHierarchy(fogs, rootGO);
                     break;
                 case RelFileType.LndCommon:
-                    if (parsedData is LndCommonData commonData) BuildLndCommonHierarchy(commonData, rootGO);
+                    if (parsedData is LndCommonData common)
+                        BuildLndCommonHierarchy(common, rootGO);
                     break;
                 case RelFileType.EnemyLayout:
-                    if (parsedData is EnemyLayoutData enemyData) BuildEnemyLayoutHierarchy(enemyData, rootGO);
+                    if (parsedData is EnemyLayoutData enemy)
+                        BuildEnemyLayoutHierarchy(enemy, rootGO);
                     break;
                 case RelFileType.QuestList:
-                    if (parsedData is List<QuestListingData> qList) BuildQuestListHierarchy(qList, rootGO);
+                    if (parsedData is List<QuestListingData> qList)
+                        BuildQuestListHierarchy(qList, rootGO);
                     break;
                 case RelFileType.FileList:
-                    if (parsedData is FileListData fList) BuildFileListHierarchy(fList, rootGO);
+                    if (parsedData is FileListData fList)
+                        BuildFileListHierarchy(fList, rootGO);
                     break;
                 case RelFileType.ObjectParam:
-                    if (parsedData is ObjectParamData objParamData) BuildObjectParamHierarchy(objParamData, rootGO, scale);
+                    if (parsedData is ObjectParamData paramData)
+                        BuildObjectParamHierarchy(paramData, rootGO, scale);
                     break;
                 case RelFileType.ObjectParticleInfo:
-                    if (parsedData is ObjectParticleInfoData objPartData) BuildObjectParticleInfoHierarchy(objPartData, rootGO);
+                    if (parsedData is ObjectParticleInfoData partData)
+                        BuildObjectParticleInfoHierarchy(partData, rootGO);
                     break;
                 case RelFileType.Collision:
                     if (parsedData is CollisionMeshData colData)
-                    {
                         CollisionParser.CreateUnityMeshAndColliders(colData, scale, $"{assetName}_CollisionMesh", rootGO, ctx);
-                    }
                     break;
             }
 
             return rootGO;
         }
 
-        private static void BuildSetLayoutHierarchy(SetFileData data, GameObject rootGO, float scale, string assetPath = null, UnityEditor.AssetImporters.AssetImportContext ctx = null)
+        private static GameObject CreateChild(Transform parent, string name, Vector3? localPos = null, Vector3? localEuler = null)
         {
-            if (data == null || data.MapData == null) return;
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            if (localPos.HasValue) go.transform.localPosition = localPos.Value;
+            if (localEuler.HasValue) go.transform.localEulerAngles = localEuler.Value;
+            return go;
+        }
+
+        private static void BuildSetLayoutHierarchy(SetFileData data, GameObject rootGO, float scale, string assetPath, UnityEditor.AssetImporters.AssetImportContext ctx)
+        {
+            if (data?.MapData == null) return;
 
             ResolvedStageContext stageCtx = !string.IsNullOrEmpty(assetPath)
                 ? RelFolderResolver.ResolveAdjacentStageFiles(assetPath, ctx)
@@ -606,65 +632,45 @@ namespace SilentTools
 
             foreach (var map in data.MapData)
             {
-                GameObject mapGO = new GameObject($"Map_{map.MapNumber:00}");
-                mapGO.transform.SetParent(rootGO.transform, false);
+                GameObject mapGO = CreateChild(rootGO.transform, $"Map_{map.MapNumber:00}");
 
-                for (int h = 0; h < map.Headers.Count; h++)
+                foreach (var header in map.Headers)
                 {
-                    var header = map.Headers[h];
-                    GameObject groupGO = new GameObject($"Group_{header.ListIndex:00}");
-                    groupGO.transform.SetParent(mapGO.transform, false);
+                    GameObject groupGO = CreateChild(mapGO.transform, $"Group_{header.ListIndex:00}");
 
                     foreach (var obj in header.Objects)
                     {
                         string defName = SetObjectDefinitions.GetDefinitionName(obj.ObjID);
-                        GameObject objGO = new GameObject($"[Obj_{obj.ObjID:000}] {defName}");
-                        objGO.transform.SetParent(groupGO.transform, false);
 
-                        Vector3 pos = obj.Position;
-                        pos.x *= -1f * scale;
-                        pos.y *= scale;
-                        pos.z *= scale;
+                        Vector3 pos = new Vector3(-obj.Position.x * scale, obj.Position.y * scale, obj.Position.z * scale);
+                        Vector3 rot = new Vector3(-obj.Rotation.x, -obj.Rotation.y, -obj.Rotation.z);
 
-                        objGO.transform.localPosition = pos;
-                        objGO.transform.localEulerAngles = new Vector3(-obj.Rotation.x, -obj.Rotation.y, -obj.Rotation.z);
+                        GameObject objGO = CreateChild(groupGO.transform, $"[Obj_{obj.ObjID:000}] {defName}", pos, rot);
 
-                        RelObjectMetadataComponent metaComp = objGO.AddComponent<RelObjectMetadataComponent>();
-                        metaComp.objID = obj.ObjID;
-                        metaComp.objectName = defName;
-                        metaComp.originalPosition = obj.Position;
-                        metaComp.originalRotation = obj.Rotation;
-                        metaComp.headerInt1 = obj.HeaderInt1;
-                        metaComp.headerInt2 = obj.HeaderInt2;
-                        metaComp.headerInt3 = obj.HeaderInt3;
-                        metaComp.metadata = obj.Metadata;
+                        RelObjectMetadataComponent meta = objGO.AddComponent<RelObjectMetadataComponent>();
+                        meta.objID = obj.ObjID;
+                        meta.objectName = defName;
+                        meta.originalPosition = obj.Position;
+                        meta.originalRotation = obj.Rotation;
+                        meta.headerInt1 = obj.HeaderInt1;
+                        meta.headerInt2 = obj.HeaderInt2;
+                        meta.headerInt3 = obj.HeaderInt3;
+                        meta.metadata = obj.Metadata;
 
-                        if (stageCtx.ObjectParams != null && stageCtx.ObjectParams.ObjectDefinitions.TryGetValue(obj.ObjID, out ObjectParamEntry paramEntry))
+                        // Link associated obj_param colliders and models
+                        if (stageCtx.ObjectParams?.ObjectDefinitions.TryGetValue(obj.ObjID, out ObjectParamEntry paramEntry) == true)
                         {
                             if (paramEntry.Hitbox != null)
                             {
-                                var hb = paramEntry.Hitbox;
-                                if (hb.HitboxShape == 2)
-                                {
-                                    BoxCollider box = objGO.AddComponent<BoxCollider>();
-                                    box.size = new Vector3(hb.UnknownFloat2 * scale * 2f, hb.UnknownFloat3 * scale * 2f, hb.UnknownFloat4 * scale * 2f);
-                                }
-                                else if (hb.HitboxShape == 1 || hb.HitboxShape == 0)
-                                {
-                                    SphereCollider sphere = objGO.AddComponent<SphereCollider>();
-                                    sphere.radius = hb.UnknownFloat6 * scale;
-                                }
+                                AttachHitboxCollider(objGO, paramEntry.Hitbox, scale);
                             }
 
-                            if (paramEntry.Models.Count > 0)
+                            foreach (var modelRef in paramEntry.Models)
                             {
-                                foreach (var modelRef in paramEntry.Models)
+                                GameObject modelInstance = RelFolderResolver.FindAndInstantiateModelAsset(modelRef.FileName, stageCtx.BaseDirectory);
+                                if (modelInstance != null)
                                 {
-                                    GameObject modelInstance = RelFolderResolver.FindAndInstantiateModelAsset(modelRef.FileName, stageCtx.BaseDirectory);
-                                    if (modelInstance != null)
-                                    {
-                                        modelInstance.transform.SetParent(objGO.transform, false);
-                                    }
+                                    modelInstance.transform.SetParent(objGO.transform, false);
                                 }
                             }
                         }
@@ -673,17 +679,31 @@ namespace SilentTools
             }
         }
 
+        private static void AttachHitboxCollider(GameObject go, ObjectHitbox hb, float scale)
+        {
+            if (hb.HitboxShape == 2)
+            {
+                BoxCollider box = go.AddComponent<BoxCollider>();
+                box.size = new Vector3(hb.UnknownFloat2 * scale * 2f, hb.UnknownFloat3 * scale * 2f, hb.UnknownFloat4 * scale * 2f);
+            }
+            else if (hb.HitboxShape is 0 or 1)
+            {
+                SphereCollider sphere = go.AddComponent<SphereCollider>();
+                sphere.radius = hb.UnknownFloat6 * scale;
+            }
+        }
+
         private static void BuildObjectParamHierarchy(ObjectParamData data, GameObject rootGO, float scale)
         {
-            if (data == null || data.ObjectDefinitions == null) return;
+            if (data?.ObjectDefinitions == null) return;
+
             foreach (var kvp in data.ObjectDefinitions)
             {
                 int objId = kvp.Key;
                 ObjectParamEntry entry = kvp.Value;
                 string defName = SetObjectDefinitions.GetDefinitionName(objId);
 
-                GameObject objGO = new GameObject($"[Obj_{objId:000}] {defName}");
-                objGO.transform.SetParent(rootGO.transform, false);
+                GameObject objGO = CreateChild(rootGO.transform, $"[Obj_{objId:000}] {defName}");
 
                 RelObjectParamComponent comp = objGO.AddComponent<RelObjectParamComponent>();
                 comp.objID = objId;
@@ -703,57 +723,45 @@ namespace SilentTools
                     hitbox.paramInt5 = entry.Hitbox.UnknownInt5;
                     hitbox.paramInt9 = entry.Hitbox.UnknownInt9;
 
-                    if (entry.Hitbox.HitboxShape == 2)
-                    {
-                        BoxCollider box = objGO.AddComponent<BoxCollider>();
-                        box.size = new Vector3(entry.Hitbox.UnknownFloat2 * scale * 2f, entry.Hitbox.UnknownFloat3 * scale * 2f, entry.Hitbox.UnknownFloat4 * scale * 2f);
-                    }
-                    else if (entry.Hitbox.HitboxShape == 1 || entry.Hitbox.HitboxShape == 0)
-                    {
-                        SphereCollider sphere = objGO.AddComponent<SphereCollider>();
-                        sphere.radius = entry.Hitbox.UnknownFloat6 * scale;
-                    }
+                    AttachHitboxCollider(objGO, entry.Hitbox, scale);
                 }
 
                 if (entry.Models.Count > 0)
                 {
-                    GameObject modelsContainer = new GameObject("Models");
-                    modelsContainer.transform.SetParent(objGO.transform, false);
+                    GameObject modelsContainer = CreateChild(objGO.transform, "Models");
                     foreach (var m in entry.Models)
                     {
-                        GameObject mGO = new GameObject($"[ID_{m.Id}] {m.FileName} (Dist: {m.RenderDistance:F0})");
-                        mGO.transform.SetParent(modelsContainer.transform, false);
+                        CreateChild(modelsContainer.transform, $"[ID_{m.Id}] {m.FileName} (Dist: {m.RenderDistance:F0})");
                     }
                 }
 
                 if (entry.Animations.Count > 0)
                 {
-                    GameObject animsContainer = new GameObject($"Animations ({entry.Animations.Count})");
-                    animsContainer.transform.SetParent(objGO.transform, false);
+                    GameObject animsContainer = CreateChild(objGO.transform, $"Animations ({entry.Animations.Count})");
                     for (int a = 0; a < entry.Animations.Count; a++)
                     {
                         var anim = entry.Animations[a];
-                        string aName = !string.IsNullOrEmpty(anim.BoneAnimName) ? anim.BoneAnimName : (!string.IsNullOrEmpty(anim.TexAnimName) ? anim.TexAnimName : $"Anim_{anim.UnknownIdentifier1}");
-                        GameObject aGO = new GameObject($"[{a:00}] {aName}");
-                        aGO.transform.SetParent(animsContainer.transform, false);
+                        string aName = !string.IsNullOrEmpty(anim.BoneAnimName)
+                            ? anim.BoneAnimName
+                            : (!string.IsNullOrEmpty(anim.TexAnimName) ? anim.TexAnimName : $"Anim_{anim.UnknownIdentifier1}");
+
+                        CreateChild(animsContainer.transform, $"[{a:00}] {aName}");
                     }
                 }
 
                 if (entry.ParticleSoundReferences != null)
                 {
-                    if (entry.ParticleSoundReferences.ParticleBindings.Count > 0 || entry.ParticleSoundReferences.SoundBindings.Count > 0)
+                    var ps = entry.ParticleSoundReferences;
+                    if (ps.ParticleBindings.Count > 0 || ps.SoundBindings.Count > 0)
                     {
-                        GameObject fxContainer = new GameObject("Events & Sound");
-                        fxContainer.transform.SetParent(objGO.transform, false);
-                        foreach (var pb in entry.ParticleSoundReferences.ParticleBindings)
+                        GameObject fxContainer = CreateChild(objGO.transform, "Events & Sound");
+                        foreach (var pb in ps.ParticleBindings)
                         {
-                            GameObject pbGO = new GameObject($"[FX] {pb.ParticleName} -> {pb.EventName}");
-                            pbGO.transform.SetParent(fxContainer.transform, false);
+                            CreateChild(fxContainer.transform, $"[FX] {pb.ParticleName} -> {pb.EventName}");
                         }
-                        foreach (var sb in entry.ParticleSoundReferences.SoundBindings)
+                        foreach (var sb in ps.SoundBindings)
                         {
-                            GameObject sbGO = new GameObject($"[Sound_{sb.SoundId}] {sb.EventName}");
-                            sbGO.transform.SetParent(fxContainer.transform, false);
+                            CreateChild(fxContainer.transform, $"[Sound_{sb.SoundId}] {sb.EventName}");
                         }
                     }
                 }
@@ -762,12 +770,12 @@ namespace SilentTools
 
         private static void BuildObjectParticleInfoHierarchy(ObjectParticleInfoData data, GameObject rootGO)
         {
-            if (data == null || data.Entries == null) return;
+            if (data?.Entries == null) return;
+
             for (int i = 0; i < data.Entries.Count; i++)
             {
                 var entry = data.Entries[i];
-                GameObject pGO = new GameObject($"[{entry.ParticleIndex:000}] {entry.ParticleName}");
-                pGO.transform.SetParent(rootGO.transform, false);
+                GameObject pGO = CreateChild(rootGO.transform, $"[{entry.ParticleIndex:000}] {entry.ParticleName}");
 
                 RelObjectParticleInfoComponent comp = pGO.AddComponent<RelObjectParticleInfoComponent>();
                 comp.particleIndex = entry.ParticleIndex;
@@ -781,25 +789,27 @@ namespace SilentTools
         private static void BuildLndEffectHierarchy(LndEffectData data, GameObject rootGO)
         {
             if (data == null) return;
-            RelEnvironmentComponent envComp = rootGO.AddComponent<RelEnvironmentComponent>();
-            envComp.fog = data.Fog ?? new LndFogData();
-            envComp.playerLight1 = data.PlayerLight1 ?? new LndLightData();
-            envComp.playerLight2 = data.PlayerLight2 ?? new LndLightData();
-            envComp.playerLightAmbient = data.PlayerLightAmbient ?? new LndLightData();
-            envComp.topGradient = data.TopGradient ?? new LndGradientData();
-            envComp.bottomGradient = data.BottomGradient ?? new LndGradientData();
-            envComp.sunPosition = data.SunPosition;
+
+            RelEnvironmentComponent env = rootGO.AddComponent<RelEnvironmentComponent>();
+            env.fog = data.Fog ?? new LndFogData();
+            env.playerLight1 = data.PlayerLight1 ?? new LndLightData();
+            env.playerLight2 = data.PlayerLight2 ?? new LndLightData();
+            env.playerLightAmbient = data.PlayerLightAmbient ?? new LndLightData();
+            env.topGradient = data.TopGradient ?? new LndGradientData();
+            env.bottomGradient = data.BottomGradient ?? new LndGradientData();
+            env.sunPosition = data.SunPosition;
 
             if (data.PlayerLight1 != null) CreateLightGO("Player Light 1", data.PlayerLight1, rootGO.transform);
             if (data.PlayerLight2 != null) CreateLightGO("Player Light 2", data.PlayerLight2, rootGO.transform);
 
-            GameObject sunGO = new GameObject("Sun Light");
-            sunGO.transform.SetParent(rootGO.transform, false);
-            Light sunLight = sunGO.AddComponent<Light>();
-            sunLight.type = UnityEngine.LightType.Directional;
-            sunLight.color = Color.white;
             if (data.SunPosition != Vector3.zero)
-                sunGO.transform.forward = -data.SunPosition.normalized;
+            {
+                GameObject sun = CreateChild(rootGO.transform, "Sun Light");
+                Light l = sun.AddComponent<Light>();
+                l.type = UnityEngine.LightType.Directional;
+                l.color = Color.white;
+                sun.transform.forward = -data.SunPosition.normalized;
+            }
         }
 
         private static void BuildLndEnemyLightHierarchy(LndEnemyLightData data, GameObject rootGO)
@@ -814,37 +824,36 @@ namespace SilentTools
             if (fogs == null) return;
             for (int i = 0; i < fogs.Count; i++)
             {
-                GameObject fogGO = new GameObject($"FogPreset_{i:00}");
-                fogGO.transform.SetParent(rootGO.transform, false);
+                CreateChild(rootGO.transform, $"FogPreset_{i:00}");
             }
         }
 
         private static void BuildLndCommonHierarchy(LndCommonData data, GameObject rootGO)
         {
-            if (data == null) return;
-            GameObject sceneGO = new GameObject($"SceneLink_NBL_{data.NblFilenameFragment}");
-            sceneGO.transform.SetParent(rootGO.transform, false);
+            if (data != null)
+            {
+                CreateChild(rootGO.transform, $"SceneLink_NBL_{data.NblFilenameFragment}");
+            }
         }
 
         private static void BuildEnemyLayoutHierarchy(EnemyLayoutData data, GameObject rootGO)
         {
-            if (data == null || data.Spawns == null) return;
+            if (data?.Spawns == null) return;
+
             for (int i = 0; i < data.Spawns.Count; i++)
             {
-                GameObject spawnGO = new GameObject($"SpawnWave_{i:00}");
-                spawnGO.transform.SetParent(rootGO.transform, false);
+                GameObject waveGO = CreateChild(rootGO.transform, $"SpawnWave_{i:00}");
 
                 foreach (var monster in data.Spawns[i])
                 {
-                    GameObject mGO = new GameObject($"[Monster_{monster.MonsterNum:000}] Count_{monster.Count}");
-                    mGO.transform.SetParent(spawnGO.transform, false);
+                    GameObject mGO = CreateChild(waveGO.transform, $"[Monster_{monster.MonsterNum:000}] Count_{monster.Count}");
 
-                    RelEnemySpawnComponent sComp = mGO.AddComponent<RelEnemySpawnComponent>();
-                    sComp.spawnIndex = i;
-                    sComp.monsterNum = monster.MonsterNum;
-                    sComp.element = monster.Element;
-                    sComp.count = monster.Count;
-                    sComp.levelModifier = monster.LevelModifier;
+                    RelEnemySpawnComponent comp = mGO.AddComponent<RelEnemySpawnComponent>();
+                    comp.spawnIndex = i;
+                    comp.monsterNum = monster.MonsterNum;
+                    comp.element = monster.Element;
+                    comp.count = monster.Count;
+                    comp.levelModifier = monster.LevelModifier;
                 }
             }
         }
@@ -854,37 +863,38 @@ namespace SilentTools
             if (list == null) return;
             foreach (var q in list)
             {
-                GameObject qGO = new GameObject($"Quest_{q.QuestNumber:000}_{q.FileName}");
-                qGO.transform.SetParent(rootGO.transform, false);
+                CreateChild(rootGO.transform, $"Quest_{q.QuestNumber:000}_{q.FileName}");
             }
         }
 
         private static void BuildFileListHierarchy(FileListData data, GameObject rootGO)
         {
-            if (data == null || data.Categories == null) return;
+            if (data?.Categories == null) return;
+
             foreach (var cat in data.Categories)
             {
-                GameObject catGO = new GameObject($"Category_{cat.CategoryIndex:02d}");
-                catGO.transform.SetParent(rootGO.transform, false);
-
+                GameObject catGO = CreateChild(rootGO.transform, $"Category_{cat.CategoryIndex:02d}");
                 foreach (var fn in cat.FileNames)
                 {
-                    GameObject fileGO = new GameObject(fn);
-                    fileGO.transform.SetParent(catGO.transform, false);
+                    CreateChild(catGO.transform, fn);
                 }
             }
         }
 
         private static GameObject CreateLightGO(string name, LndLightData lightData, Transform parent)
         {
-            GameObject lGO = new GameObject(name);
-            lGO.transform.SetParent(parent, false);
+            GameObject lGO = CreateChild(parent, name);
             Light l = lGO.AddComponent<Light>();
             l.type = UnityEngine.LightType.Directional;
-            l.color = lightData != null ? lightData.LightColor : Color.white;
+            l.color = lightData?.LightColor ?? Color.white;
+
             if (lightData != null && lightData.Direction != Vector3.zero)
+            {
                 lGO.transform.forward = -lightData.Direction.normalized;
+            }
+
             return lGO;
         }
+        #endregion
     }
 }
