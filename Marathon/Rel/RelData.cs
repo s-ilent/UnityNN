@@ -130,7 +130,7 @@ namespace SilentTools
     {
         public List<ObjectParticleFileEntry> Entries { get; set; } = new List<ObjectParticleFileEntry>();
     }
-    
+
     // --------------------------------------------------------------------------
     // Etc...
     // --------------------------------------------------------------------------

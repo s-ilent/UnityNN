@@ -18,6 +18,7 @@ namespace SilentTools
         private SerializedProperty m_MaterialNamingProp;
         private SerializedProperty m_MaterialSearchPathProp;
         private SerializedProperty m_ImportAnimationProp;
+        private SerializedProperty m_GenerateAnimatorControllerProp;
         private SerializedProperty m_NodeHierarchyTargetProp;
 
         public override void OnEnable()
@@ -31,6 +32,7 @@ namespace SilentTools
             m_MaterialNamingProp = serializedObject.FindProperty("m_MaterialNaming");
             m_MaterialSearchPathProp = serializedObject.FindProperty("m_MaterialSearchPath");
             m_ImportAnimationProp = serializedObject.FindProperty("m_ImportAnimation");
+            m_GenerateAnimatorControllerProp = serializedObject.FindProperty("m_GenerateAnimatorController");
             m_NodeHierarchyTargetProp = serializedObject.FindProperty("m_NodeHierarchyTarget");
         }
 
@@ -40,6 +42,16 @@ namespace SilentTools
 
             string assetPath = ((ScriptedImporter)target).assetPath;
             string ext = Path.GetExtension(assetPath).ToLowerInvariant();
+
+            if (ext == ".nbl" || ext == ".gbl" || ext == ".zbl")
+            {
+                EditorGUILayout.LabelField("NBL Archive Tools", EditorStyles.boldLabel);
+                if (GUILayout.Button("Extract NBL Contents to Folder...", GUILayout.Height(28)))
+                {
+                    NblExporter.ExtractNblToDirectory(assetPath);
+                }
+                EditorGUILayout.Space();
+            }
 
             EditorGUILayout.LabelField("Mesh Settings", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(m_ScaleProp, new GUIContent("Scale Factor"));
@@ -51,9 +63,32 @@ namespace SilentTools
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Animation Settings", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(m_ImportAnimationProp, new GUIContent("Import Animation"));
-            if (m_NodeHierarchyTargetProp != null)
+
+            if (m_ImportAnimationProp.boolValue)
             {
-                EditorGUILayout.PropertyField(m_NodeHierarchyTargetProp, new GUIContent("Node Hierarchy Targets"), true);
+                EditorGUI.indentLevel++;
+
+                int distinctBoneCount, distinctTexCount;
+                bool canGenerateController = NinjaAnimatorResolver.CanGenerateAnimatorController(assetPath, out distinctBoneCount, out distinctTexCount);
+
+                EditorGUI.BeginDisabledGroup(!canGenerateController);
+                if (m_GenerateAnimatorControllerProp != null)
+                {
+                    EditorGUILayout.PropertyField(m_GenerateAnimatorControllerProp, new GUIContent("Generate Animator Controller", "Creates a 2-layer Animator Controller for single-animation assets (Layer 0: Transform, Layer 1: Material)."));
+                }
+                EditorGUI.EndDisabledGroup();
+
+                if (!canGenerateController)
+                {
+                    EditorGUILayout.HelpBox($"Animator Controller auto-generation is disabled because this object has multiple distinct state animations in obj_param ({distinctBoneCount} bone tracks, {distinctTexCount} material tracks). Use RelObjectAnimationComponent on the instance to access individual clips.", MessageType.None);
+                }
+
+                if (m_NodeHierarchyTargetProp != null)
+                {
+                    EditorGUILayout.PropertyField(m_NodeHierarchyTargetProp, new GUIContent("Node Hierarchy Targets"), true);
+                }
+
+                EditorGUI.indentLevel--;
             }
 
             EditorGUILayout.Space();

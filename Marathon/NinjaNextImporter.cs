@@ -2,6 +2,7 @@
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.AssetImporters;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -45,6 +46,7 @@ namespace SilentTools
 
         [Header("Animation Settings")]
         public bool m_ImportAnimation = true;
+        public bool m_GenerateAnimatorController = false;
         public string[] m_NodeHierarchyTarget;
 
         public override void OnImportAsset(AssetImportContext ctx)
@@ -63,7 +65,7 @@ namespace SilentTools
                 {
                     rawData = File.ReadAllBytes(ctx.assetPath);
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
                     Debug.LogError($"Failed to read REL/XNR file {ctx.assetPath}:\n{ex}");
                     return;
@@ -88,7 +90,7 @@ namespace SilentTools
                     Debug.LogError($"Failed to parse REL/XNR file {ctx.assetPath}: File produced no valid layout, collision, or environment data.");
                     return;
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
                     Debug.LogError($"Failed to parse REL/XNR file {ctx.assetPath}:\n{ex}");
                     return;
@@ -114,7 +116,7 @@ namespace SilentTools
                     loader.Load(ctx.assetPath);
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 Debug.LogError($"Failed to load NinjaNext file {ctx.assetPath}:\n{ex}");
                 return;
@@ -146,7 +148,7 @@ namespace SilentTools
             }
 
             // -----------------------------------------------------------------
-            // 4. Model & Hierarchy Assets (.xno, .xna, .xnj, .nbl, etc.)
+            // 4. Model & Hierarchy Construction
             // -----------------------------------------------------------------
             GameObject rootGO = null;
             List<Transform> nodeTransforms = new List<Transform>();
@@ -185,154 +187,25 @@ namespace SilentTools
             }
 
             // -----------------------------------------------------------------
-            // 6. Animation Resolution (Animator & obj_param Animation Support)
+            // 6. Animation Setup & Controller Resolution (Encapsulated)
             // -----------------------------------------------------------------
-            if (rootGO != null && m_ImportAnimation)
-            {
-                List<AnimationClip> loadedClips = new List<AnimationClip>();
-                HashSet<string> loadedClipNames = new HashSet<string>();
-
-                // A. Embedded & Adjacent Matching Motions
-                NinjaMotion nodeMotion = loader.Data.Motion;
-                NinjaMotion matMotion = loader.Data.MaterialMotion;
-
-                NinjaMotionResolver.ResolveLinkedMotions(ctx.assetPath, ctx, out NinjaMotion extraNodeMot, out NinjaMotion extraMatMot, out _, out _);
-                if (nodeMotion == null) nodeMotion = extraNodeMot;
-                if (matMotion == null) matMotion = extraMatMot;
-
-                if (nodeMotion != null)
-                {
-                    AnimationClip nodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", m_Scale, rootGO, nodeTransforms, m_MeshImportMode);
-                    if (nodeClip != null && loadedClipNames.Add(nodeClip.name))
-                    {
-                        ctx.AddObjectToAsset("NodeAnimation", nodeClip);
-                        loadedClips.Add(nodeClip);
-                    }
-                }
-
-                if (matMotion != null)
-                {
-                    AnimationClip matClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", m_Scale, rootGO, nodeTransforms, m_MeshImportMode);
-                    if (matClip != null && loadedClipNames.Add(matClip.name))
-                    {
-                        ctx.AddObjectToAsset("MaterialAnimation", matClip);
-                        loadedClips.Add(matClip);
-                    }
-                }
-
-                // B. obj_param.xnr Associated Animations Resolution
-                ResolvedStageContext stageContext = RelFolderResolver.ResolveAdjacentStageFiles(ctx.assetPath, ctx);
-                var matchedParam = RelFolderResolver.FindParamEntryForModel(stageContext.ObjectParams, assetName);
-
-                if (matchedParam.HasValue)
-                {
-                    int objId = matchedParam.Value.Key;
-                    ObjectParamEntry paramEntry = matchedParam.Value.Value;
-
-                    RelObjectAnimationComponent animMeta = rootGO.AddComponent<RelObjectAnimationComponent>();
-                    animMeta.objID = objId;
-
-                    for (int a = 0; a < paramEntry.Animations.Count; a++)
-                    {
-                        var aRef = paramEntry.Animations[a];
-                        ObjectAnimationEntryData entryData = new ObjectAnimationEntryData
-                        {
-                            id1 = aRef.UnknownIdentifier1,
-                            id2 = aRef.UnknownIdentifier2,
-                            boneAnimName = aRef.BoneAnimName,
-                            texAnimName = aRef.TexAnimName,
-                            paramFloat1 = aRef.UnknownFloat1,
-                            paramFloat2 = aRef.UnknownFloat2,
-                            paramFloat3 = aRef.UnknownFloat3,
-                            paramFloat4 = aRef.UnknownFloat4,
-                            paramFloat5 = aRef.UnknownFloat5,
-                            paramFloat6 = aRef.UnknownFloat6
-                        };
-
-                        // 1. Resolve Bone Animation from obj_param
-                        if (!string.IsNullOrEmpty(aRef.BoneAnimName))
-                        {
-                            string boneAnimPath = RelFolderResolver.FindAnimationFilePath(aRef.BoneAnimName, stageContext.BaseDirectory, false);
-                            if (!string.IsNullOrEmpty(boneAnimPath))
-                            {
-                                try
-                                {
-                                    NinjaNext animLoader = new NinjaNext();
-                                    animLoader.Load(boneAnimPath);
-                                    if (animLoader.Data.Motion != null)
-                                    {
-                                        ctx.DependsOnSourceAsset(boneAnimPath);
-                                        string clipId = $"Anim_{a}_{aRef.BoneAnimName}";
-                                        AnimationClip paramClip = NinjaMotionResolver.ResolveMotion(animLoader.Data.Motion, clipId, m_Scale, rootGO, nodeTransforms, m_MeshImportMode);
-                                        if (paramClip != null)
-                                        {
-                                            if (loadedClipNames.Add(paramClip.name))
-                                            {
-                                                ctx.AddObjectToAsset(clipId, paramClip);
-                                                loadedClips.Add(paramClip);
-                                            }
-                                            entryData.boneClip = paramClip;
-                                        }
-                                    }
-                                }
-                                catch (System.Exception ex)
-                                {
-                                    Debug.LogWarning($"Could not load obj_param bone anim {boneAnimPath}: {ex.Message}");
-                                }
-                            }
-                        }
-
-                        // 2. Resolve Texture / Material Animation from obj_param
-                        if (!string.IsNullOrEmpty(aRef.TexAnimName))
-                        {
-                            string texAnimPath = RelFolderResolver.FindAnimationFilePath(aRef.TexAnimName, stageContext.BaseDirectory, true);
-                            if (!string.IsNullOrEmpty(texAnimPath))
-                            {
-                                try
-                                {
-                                    NinjaNext animLoader = new NinjaNext();
-                                    animLoader.Load(texAnimPath);
-                                    NinjaMotion foundMatMot = animLoader.Data.MaterialMotion ?? animLoader.Data.Motion;
-                                    if (foundMatMot != null)
-                                    {
-                                        ctx.DependsOnSourceAsset(texAnimPath);
-                                        string clipId = $"MatAnim_{a}_{aRef.TexAnimName}";
-                                        AnimationClip paramMatClip = NinjaMotionResolver.ResolveMotion(foundMatMot, clipId, m_Scale, rootGO, nodeTransforms, m_MeshImportMode);
-                                        if (paramMatClip != null)
-                                        {
-                                            if (loadedClipNames.Add(paramMatClip.name))
-                                            {
-                                                ctx.AddObjectToAsset(clipId, paramMatClip);
-                                                loadedClips.Add(paramMatClip);
-                                            }
-                                            entryData.materialClip = paramMatClip;
-                                        }
-                                    }
-                                }
-                                catch (System.Exception ex)
-                                {
-                                    Debug.LogWarning($"Could not load obj_param material anim {texAnimPath}: {ex.Message}");
-                                }
-                            }
-                        }
-
-                        animMeta.animations.Add(entryData);
-                    }
-                }
-
-                // C. Attach Animator Component (without creating an AnimatorController)
-                if (loadedClips.Count > 0)
-                {
-                    rootGO.AddComponent<Animator>();
-                }
-
-                ctx.AddObjectToAsset("main", rootGO, icon);
-                ctx.SetMainObject(rootGO);
-                return;
-            }
-
             if (rootGO != null)
             {
+                if (m_ImportAnimation)
+                {
+                    NinjaAnimatorResolver.SetupModelAnimations(
+                        loader,
+                        rootGO,
+                        nodeTransforms,
+                        assetName,
+                        ctx.assetPath,
+                        m_Scale,
+                        m_MeshImportMode,
+                        m_GenerateAnimatorController,
+                        ctx
+                    );
+                }
+
                 ctx.AddObjectToAsset("main", rootGO, icon);
                 ctx.SetMainObject(rootGO);
                 return;
@@ -350,7 +223,7 @@ namespace SilentTools
         {
             StringBuilder sb = new StringBuilder();
 
-            if (data.TextureList != null && data.TextureList.NinjaTextureFiles != null)
+            if (data.TextureList?.NinjaTextureFiles != null)
             {
                 sb.AppendLine($"Ninja Texture List ({assetName}{extension})");
                 sb.AppendLine($"Textures ({data.TextureList.NinjaTextureFiles.Count}):");
@@ -360,7 +233,7 @@ namespace SilentTools
                     sb.AppendLine($"  [{i:00}] {tf.FileName} (GlobalIndex: {tf.GlobalIndex}, Bank: {tf.Bank})");
                 }
             }
-            else if (data.NodeNameList != null && data.NodeNameList.NinjaNodeNames != null)
+            else if (data.NodeNameList?.NinjaNodeNames != null)
             {
                 sb.AppendLine($"Ninja Node Name List ({assetName}{extension})");
                 sb.AppendLine($"Names ({data.NodeNameList.NinjaNodeNames.Count}):");
