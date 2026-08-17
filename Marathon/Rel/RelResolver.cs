@@ -50,7 +50,11 @@ namespace SilentTools
         /// </summary>
         public static uint ResolveOffset(int ptr, uint fileSize, uint baseAddr = 0)
         {
-            return TryResolveOffset(ptr, fileSize, baseAddr, out uint resolved) ? resolved : 0;
+            if (TryResolveOffset(ptr, fileSize, baseAddr, out uint resolved))
+            {
+                return resolved;
+            }
+            return 0;
         }
         #endregion
 
@@ -62,10 +66,11 @@ namespace SilentTools
         {
             string name = string.IsNullOrEmpty(filename) ? "" : filename.ToLowerInvariant();
 
+            // 1. Specific filename matches
             if (name == "filelist.rel" || name == "filelist.xnr")
                 return RelFileType.QuestList;
 
-            if (name.Contains("filelist") || name.Contains("scene_filelist"))
+            if (name.Contains("scene_filelist") || name.Contains("obj_unit_filelist") || name.Contains("filelist"))
                 return RelFileType.FileList;
 
             if (name.Contains("collision") || name.Contains("colli") || 
@@ -333,7 +338,7 @@ namespace SilentTools
         /// <summary>
         /// Calculates the base memory address used for absolute pointer rebasing.
         /// </summary>
-        private static uint ComputeBaseAddress(BinaryReaderEx reader, uint headerLoc, uint fileSize)
+        public static uint ComputeBaseAddress(BinaryReaderEx reader, uint headerLoc, uint fileSize)
         {
             uint baseAddr = 0;
             if (headerLoc > fileSize) return headerLoc - 0x10;
@@ -356,7 +361,7 @@ namespace SilentTools
 
                 if (firstTopPtr != 0)
                 {
-                    for (int backStep = 8; backStep <= 0x100; backStep += 8)
+                    for (int backStep = 8; backStep <= 0x200; backStep += 8)
                     {
                         int catOff = (int)headerLoc - backStep;
                         if (catOff >= 0x10)
@@ -414,15 +419,34 @@ namespace SilentTools
                 // Direct base deduction
                 if (p1 > (int)fileSize && p1 < 0x0FFFFFFF)
                 {
-                    uint candidate = (uint)p1 - 0x10;
-                    if (candidate % 16 == 0 && (uint)p1 >= candidate && ((uint)p1 - candidate) < fileSize)
-                        baseAddr = candidate;
+                    // Check if pointer points directly to payload start at 0x10, 0x20, 0x30, etc.
+                    for (uint probeOff = 0x10; probeOff <= 0x80; probeOff += 0x10)
+                    {
+                        if ((uint)p1 >= probeOff)
+                        {
+                            uint candidate = (uint)p1 - probeOff;
+                            if (candidate % 16 == 0 && ((uint)p1 - candidate) < fileSize)
+                            {
+                                baseAddr = candidate;
+                                break;
+                            }
+                        }
+                    }
                 }
                 else if (p2 > (int)fileSize && p2 < 0x0FFFFFFF)
                 {
-                    uint candidate = (uint)p2 - 0x10;
-                    if (candidate % 16 == 0 && (uint)p2 >= candidate && ((uint)p2 - candidate) < fileSize)
-                        baseAddr = candidate;
+                    for (uint probeOff = 0x10; probeOff <= 0x80; probeOff += 0x10)
+                    {
+                        if ((uint)p2 >= probeOff)
+                        {
+                            uint candidate = (uint)p2 - probeOff;
+                            if (candidate % 16 == 0 && ((uint)p2 - candidate) < fileSize)
+                            {
+                                baseAddr = candidate;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -458,9 +482,12 @@ namespace SilentTools
                 uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
                 if (headerLoc > fileSize) headerLoc = 0x10;
 
-                // Test candidate parsers
+                // Priority test: try identified type first, then remaining candidates
                 List<RelFileType> typesToTry = new List<RelFileType>();
-                if (relType != RelFileType.Unknown) typesToTry.Add(relType);
+                if (relType != RelFileType.Unknown)
+                {
+                    typesToTry.Add(relType);
+                }
 
                 foreach (RelFileType t in Enum.GetValues(typeof(RelFileType)))
                 {
@@ -484,11 +511,11 @@ namespace SilentTools
                     }
                     catch
                     {
-                        // Proceed to next parser candidate on failure
+                        // Proceed to next candidate on failure
                     }
                 }
 
-                throw new InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized or corrupted structure.");
+                throw new InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized structure.");
             }
         }
 
@@ -496,8 +523,16 @@ namespace SilentTools
         {
             switch (type)
             {
+                case RelFileType.FileList:
+                    return FileListParser.Parse(reader, baseAddr, headerLoc);
+                case RelFileType.Collision:
+                    return CollisionParser.Parse(reader, fileSize, headerLoc);
                 case RelFileType.SetLayout:
                     return SetFileParser.Parse(reader, fileSize);
+                case RelFileType.ObjectParam:
+                    return ObjectParamParser.Parse(reader, fileSize, baseAddr, headerLoc);
+                case RelFileType.ObjectParticleInfo:
+                    return ObjectParticleInfoParser.Parse(reader, fileSize, baseAddr, headerLoc);
                 case RelFileType.LndEffect:
                     return LndEffectParser.Parse(reader, fileSize);
                 case RelFileType.LndEnemyLight:
@@ -512,14 +547,6 @@ namespace SilentTools
                     return EnemyLayoutParser.Parse(reader, baseAddr);
                 case RelFileType.QuestList:
                     return QuestListParser.Parse(reader, baseAddr);
-                case RelFileType.Collision:
-                    return CollisionParser.Parse(reader, fileSize, headerLoc);
-                case RelFileType.FileList:
-                    return FileListParser.Parse(reader, baseAddr, headerLoc);
-                case RelFileType.ObjectParam:
-                    return ObjectParamParser.Parse(reader, fileSize, baseAddr, headerLoc);
-                case RelFileType.ObjectParticleInfo:
-                    return ObjectParticleInfoParser.Parse(reader, fileSize, baseAddr, headerLoc);
                 default:
                     return null;
             }
@@ -528,10 +555,10 @@ namespace SilentTools
         public static bool IsNonEmptyRelData(object parsedData)
         {
             if (parsedData == null) return false;
-            if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
-            if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0 && colData.Triangles != null && colData.Triangles.Count > 0;
-            if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
             if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
+            if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0 && colData.Triangles != null && colData.Triangles.Count > 0;
+            if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
+            if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
             if (parsedData is ObjectParamData paramData) return paramData.ObjectDefinitions != null && paramData.ObjectDefinitions.Count > 0;
             if (parsedData is ObjectParticleInfoData partData) return partData.Entries != null && partData.Entries.Count > 0;
             if (parsedData is LndEffectData effect)
