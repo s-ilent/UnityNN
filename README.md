@@ -29,7 +29,7 @@ Note: UnityNN's functionality has been primarily tested with PSU's animated stat
 ## 👏 Credits & Acknowledgments
 
 ### Sega NN Format Research & Libraries
-- **Big-Endian 32 / Knuxfan24** — Creators of the **[Marathon](https://github.com/Knuxfan24/Marathon)** library, providing base C# data structures and binary reading/writing logic for Sega NN (`NinjaNext`) assets (`.xno`, `.xnm`, `.xna`, `.xnt`, `.nbl`).
+- **hyperbx / Knuxfan24** — Creators of the **[Marathon](https://github.com/Knuxfan24/Marathon)** library, providing base C# data structures and binary reading/writing logic for Sega NN (`NinjaNext`) assets (`.xno`, `.xnm`, `.xna`, `.xnt`, `.nbl`).
 - **Radfordhound** — Invaluable research and documentation on Sega NN format flags, BAMS angle systems, node types, vertex structures, and submotion interpolation types.
 - **Agra ([Agrathejagged / TenoraWorks](https://github.com/Agrathejagged/tenora-works))** — Research, documentation, and object definitions for Phantasy Star Universe `.rel` / `.xnr` stage layout, environment, and mission file structures.
 
