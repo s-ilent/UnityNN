@@ -29,12 +29,11 @@ namespace SilentTools
             outNodeTransforms = new List<Transform>();
             if (objData == null) return null;
 
-            string nameSource;
-            NinjaNodeNameList resolvedNodeNames = NinjaNodeNameResolver.ResolveNodeNames(objData, null, ctx?.assetPath, ctx, out nameSource);
+            NinjaNodeNameResolver.ResolveNodeNames(objData, null, ctx?.assetPath, ctx, out _);
 
             GameObject rootGO = new GameObject(assetName);
 
-            // 1. Build Full Node Hierarchy
+            // 1. Build Node Hierarchy
             for (int i = 0; i < objData.Nodes.Count; i++)
             {
                 NinjaNode node = objData.Nodes[i];
@@ -42,9 +41,7 @@ namespace SilentTools
                 GameObject nodeGO = new GameObject(nodeName);
 
                 Vector3 pos = node.Translation;
-                pos.x *= -1f * scale;
-                pos.y *= scale;
-                pos.z *= scale;
+                pos = new Vector3(-pos.x * scale, pos.y * scale, pos.z * scale);
 
                 Vector3 rot = node.Rotation;
                 if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
@@ -64,20 +61,9 @@ namespace SilentTools
             }
 
             // 2. Resolve Materials
-            List<Material> materials = new List<Material>();
-            if (importMaterials)
-            {
-                materials = NinjaMaterialResolver.ResolveMaterials(
-                    objData,
-                    texList,
-                    assetName,
-                    ctx,
-                    materialLocation,
-                    materialSearch,
-                    materialNaming,
-                    materialSearchPath
-                );
-            }
+            List<Material> materials = importMaterials
+                ? NinjaMaterialResolver.ResolveMaterials(objData, texList, assetName, ctx, materialLocation, materialSearch, materialNaming, materialSearchPath)
+                : new List<Material>();
 
             // 3. Dispatch to Mesh Import Mode
             switch (importMode)
@@ -85,11 +71,9 @@ namespace SilentTools
                 case MeshImportMode.SingleSkinnedMesh:
                     BuildSingleSkinnedMesh(objData, rootGO, outNodeTransforms, materials, scale, assetName, ctx);
                     break;
-
                 case MeshImportMode.CombinedByNode:
                     BuildCombinedNodeMeshes(objData, rootGO, outNodeTransforms, materials, scale, assetName, ctx);
                     break;
-
                 case MeshImportMode.IndividualSubObjects:
                 default:
                     BuildIndividualSubObjects(objData, rootGO, outNodeTransforms, materials, scale, assetName, ctx);
@@ -99,7 +83,7 @@ namespace SilentTools
             return rootGO;
         }
 
-        #region Mode 1: Single Skinned Mesh (Unified Skeleton)
+        #region Mode 1: Single Skinned Mesh
         private static void BuildSingleSkinnedMesh(
             NinjaObject objData,
             GameObject rootGO,
@@ -109,135 +93,25 @@ namespace SilentTools
             string assetName,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
-            List<Vector3> allPositions = new List<Vector3>();
-            List<Vector3> allNormals = new List<Vector3>();
-            List<Vector4> allTangents = new List<Vector4>();
-            List<Color32> allColors = new List<Color32>();
-            List<Vector2> allUVs = new List<Vector2>();
-            List<BoneWeight> allBoneWeights = new List<BoneWeight>();
-
-            Dictionary<int, List<int>> materialTriangles = new Dictionary<int, List<int>>();
+            MeshBuffer buffer = new MeshBuffer();
 
             foreach (var subObj in objData.SubObjects)
             {
                 foreach (var meshSet in subObj.MeshSets)
                 {
-                    if (meshSet.VertexListIndex < 0 || meshSet.VertexListIndex >= objData.VertexLists.Count ||
-                        meshSet.PrimitiveListIndex < 0 || meshSet.PrimitiveListIndex >= objData.PrimitiveLists.Count)
-                    {
-                        continue;
-                    }
-
-                    NinjaVertexList vList = objData.VertexLists[meshSet.VertexListIndex];
-                    NinjaPrimitiveList pList = objData.PrimitiveLists[meshSet.PrimitiveListIndex];
-                    int matIdx = meshSet.MaterialIndex;
-
-                    if (!materialTriangles.ContainsKey(matIdx))
-                        materialTriangles[matIdx] = new List<int>();
-
-                    int baseVertexOffset = allPositions.Count;
-                    bool isSkinned = vList.BoneMatrixIndices != null && vList.BoneMatrixIndices.Count > 0;
-                    int fallbackNodeIdx = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < allNodeTransforms.Count) ? meshSet.NodeIndex : 0;
-
-                    for (int v = 0; v < vList.Vertices.Count; v++)
-                    {
-                        NinjaVertex vert = vList.Vertices[v];
-                        if (vert == null) continue;
-
-                        Vector3 pos = vert.Position.GetValueOrDefault();
-                        pos.x *= -1f * scale;
-                        pos.y *= scale;
-                        pos.z *= scale;
-                        allPositions.Add(pos);
-
-                        Vector3 norm = vert.Normals.GetValueOrDefault(Vector3.up);
-                        norm.x *= -1f;
-                        allNormals.Add(norm.normalized);
-
-                        Vector3 tan = vert.Tangent.GetValueOrDefault(Vector3.right);
-                        allTangents.Add(new Vector4(-tan.x, tan.y, tan.z, 1.0f));
-
-                        if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 0)
-                        {
-                            Vector2 uv = vert.TextureCoordinates[0];
-                            allUVs.Add(new Vector2(uv.x, 1.0f - uv.y));
-                        }
-                        else
-                        {
-                            allUVs.Add(Vector2.zero);
-                        }
-
-                        if (vert.VertexColours != null && vert.VertexColours.Length >= 4)
-                        {
-                            allColors.Add(new Color32(vert.VertexColours[2], vert.VertexColours[1], vert.VertexColours[0], vert.VertexColours[3]));
-                        }
-                        else
-                        {
-                            allColors.Add(new Color32(255, 255, 255, 255));
-                        }
-
-                        BoneWeight bw = new BoneWeight();
-                        if (isSkinned && vert.Weight.HasValue && vert.MatrixIndices != null && vert.MatrixIndices.Length >= 4)
-                        {
-                            bw.boneIndex0 = RemapGlobalBoneIndex(vert.MatrixIndices[0], vList.BoneMatrixIndices, fallbackNodeIdx);
-                            bw.boneIndex1 = RemapGlobalBoneIndex(vert.MatrixIndices[1], vList.BoneMatrixIndices, fallbackNodeIdx);
-                            bw.boneIndex2 = RemapGlobalBoneIndex(vert.MatrixIndices[2], vList.BoneMatrixIndices, fallbackNodeIdx);
-                            bw.boneIndex3 = RemapGlobalBoneIndex(vert.MatrixIndices[3], vList.BoneMatrixIndices, fallbackNodeIdx);
-
-                            Vector3 w = vert.Weight.Value;
-                            bw.weight0 = w.x;
-                            bw.weight1 = w.y;
-                            bw.weight2 = w.z;
-                            bw.weight3 = Mathf.Max(0f, 1.0f - (w.x + w.y + w.z));
-                        }
-                        else
-                        {
-                            bw.boneIndex0 = fallbackNodeIdx;
-                            bw.weight0 = 1.0f;
-                        }
-                        allBoneWeights.Add(bw);
-                    }
-
-                    List<int> decodedTris = DecodeIndices(pList);
-                    for (int t = 0; t < decodedTris.Count; t++)
-                    {
-                        materialTriangles[matIdx].Add(baseVertexOffset + decodedTris[t]);
-                    }
+                    int fallbackNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < allNodeTransforms.Count) ? meshSet.NodeIndex : 0;
+                    buffer.AppendMeshSet(objData, meshSet, scale, null, null, fallbackNode, meshSet.MaterialIndex);
                 }
             }
 
-            if (allPositions.Count == 0) return;
-
-            Mesh mesh = new Mesh { name = $"{assetName}_SkinnedMesh" };
-            if (allPositions.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-
-            mesh.vertices = allPositions.ToArray();
-            mesh.normals = allNormals.ToArray();
-            mesh.tangents = allTangents.ToArray();
-            mesh.uv = allUVs.ToArray();
-            mesh.colors32 = allColors.ToArray();
-            mesh.boneWeights = allBoneWeights.ToArray();
-
-            List<int> sortedMatKeys = new List<int>(materialTriangles.Keys);
-            sortedMatKeys.Sort();
-
-            mesh.subMeshCount = sortedMatKeys.Count;
-            Material[] assignedMaterials = new Material[sortedMatKeys.Count];
-
-            for (int s = 0; s < sortedMatKeys.Count; s++)
-            {
-                int mKey = sortedMatKeys[s];
-                mesh.SetTriangles(materialTriangles[mKey], s);
-                assignedMaterials[s] = (mKey >= 0 && mKey < materials.Count && materials[mKey] != null)
-                    ? materials[mKey] : new Material(Shader.Find("Standard"));
-            }
+            Mesh mesh = buffer.BuildMesh($"{assetName}_SkinnedMesh");
+            if (mesh == null) return;
 
             Transform[] bones = allNodeTransforms.ToArray();
             Matrix4x4[] bindPoses = new Matrix4x4[bones.Length];
             for (int b = 0; b < bones.Length; b++)
-            {
                 bindPoses[b] = bones[b].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
-            }
+
             mesh.bindposes = bindPoses;
             mesh.RecalculateBounds();
 
@@ -247,20 +121,11 @@ namespace SilentTools
             smr.sharedMesh = mesh;
             smr.bones = bones;
             smr.rootBone = bones.Length > 0 ? bones[0] : rootGO.transform;
-            smr.sharedMaterials = assignedMaterials;
-        }
-
-        private static int RemapGlobalBoneIndex(byte localPaletteIdx, List<int> bonePalette, int fallbackNodeIdx)
-        {
-            if (bonePalette != null && localPaletteIdx < bonePalette.Count)
-            {
-                return bonePalette[localPaletteIdx];
-            }
-            return fallbackNodeIdx;
+            smr.sharedMaterials = MapMaterials(buffer.GetSortedSubmeshKeys(), materials);
         }
         #endregion
 
-        #region Mode 2: Combined Node Meshes (Per-Material Separation)
+        #region Mode 2: Combined Node Meshes
         private static void BuildCombinedNodeMeshes(
             NinjaObject objData,
             GameObject rootGO,
@@ -272,10 +137,8 @@ namespace SilentTools
         {
             for (int n = 0; n < objData.Nodes.Count; n++)
             {
-                Transform nodeTransform = allNodeTransforms[n];
-
-                // Group all MeshSets on this node by MaterialIndex
-                Dictionary<int, List<NinjaMeshSet>> meshSetsByMaterial = new Dictionary<int, List<NinjaMeshSet>>();
+                Transform nodeTr = allNodeTransforms[n];
+                Dictionary<int, List<NinjaMeshSet>> byMat = new Dictionary<int, List<NinjaMeshSet>>();
 
                 foreach (var subObj in objData.SubObjects)
                 {
@@ -283,52 +146,42 @@ namespace SilentTools
                     {
                         if (ms.NodeIndex == n)
                         {
-                            if (!meshSetsByMaterial.ContainsKey(ms.MaterialIndex))
-                                meshSetsByMaterial[ms.MaterialIndex] = new List<NinjaMeshSet>();
-
-                            meshSetsByMaterial[ms.MaterialIndex].Add(ms);
+                            if (!byMat.ContainsKey(ms.MaterialIndex)) byMat[ms.MaterialIndex] = new List<NinjaMeshSet>();
+                            byMat[ms.MaterialIndex].Add(ms);
                         }
                     }
                 }
 
-                if (meshSetsByMaterial.Count == 0) continue;
+                if (byMat.Count == 0) continue;
+                bool isSingle = byMat.Count == 1;
 
-                bool isSingleMaterialOnNode = meshSetsByMaterial.Count == 1;
-
-                foreach (var kvp in meshSetsByMaterial)
+                foreach (var kvp in byMat)
                 {
                     int matIdx = kvp.Key;
-                    List<NinjaMeshSet> matMeshSets = kvp.Value;
+                    List<NinjaMeshSet> sets = kvp.Value;
+                    GameObject targetGO = isSingle ? nodeTr.gameObject : new GameObject($"Mat_{matIdx:00}");
+                    if (!isSingle) targetGO.transform.SetParent(nodeTr, false);
 
-                    GameObject targetGO = isSingleMaterialOnNode
-                        ? nodeTransform.gameObject
-                        : new GameObject($"Mat_{matIdx:00}");
-
-                    if (!isSingleMaterialOnNode)
-                    {
-                        targetGO.transform.SetParent(nodeTransform, false);
-                    }
-
-                    BuildSingleMaterialNodeMesh(objData, rootGO, nodeTransform, targetGO, matMeshSets, matIdx, n, materials, scale, assetName, ctx);
+                    BuildNodeMeshSection(objData, rootGO, nodeTr, targetGO, sets, matIdx, n, materials, scale, assetName, ctx);
                 }
             }
         }
 
-        private static void BuildSingleMaterialNodeMesh(
+        private static void BuildNodeMeshSection(
             NinjaObject objData,
             GameObject rootGO,
-            Transform nodeTransform,
+            Transform nodeTr,
             GameObject targetGO,
             List<NinjaMeshSet> meshSets,
-            int materialIndex,
-            int nodeIndex,
+            int matIdx,
+            int nodeIdx,
             List<Material> materials,
             float scale,
             string assetName,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             bool isSkinned = false;
-            HashSet<int> boneIndexSet = new HashSet<int>();
+            HashSet<int> boneSet = new HashSet<int>();
 
             foreach (var ms in meshSets)
             {
@@ -338,185 +191,68 @@ namespace SilentTools
                     if (vl.BoneMatrixIndices != null && vl.BoneMatrixIndices.Count > 0)
                     {
                         isSkinned = true;
-                        foreach (int bIdx in vl.BoneMatrixIndices) boneIndexSet.Add(bIdx);
+                        foreach (int b in vl.BoneMatrixIndices) boneSet.Add(b);
                     }
                 }
             }
 
-            List<int> localBonePalette = new List<int>(boneIndexSet);
-            Dictionary<int, int> globalToLocalBoneMap = new Dictionary<int, int>();
-            for (int b = 0; b < localBonePalette.Count; b++)
-            {
-                globalToLocalBoneMap[localBonePalette[b]] = b;
-            }
+            List<int> localPalette = new List<int>(boneSet);
+            Dictionary<int, int> globalToLocal = new Dictionary<int, int>();
+            for (int b = 0; b < localPalette.Count; b++) globalToLocal[localPalette[b]] = b;
 
-            List<Vector3> positions = new List<Vector3>();
-            List<Vector3> normals = new List<Vector3>();
-            List<Vector4> tangents = new List<Vector4>();
-            List<Color32> colors = new List<Color32>();
-            List<Vector2> uvs = new List<Vector2>();
-            List<BoneWeight> boneWeights = new List<BoneWeight>();
-            List<int> triangles = new List<int>();
-
-            Matrix4x4 nodeToLocal = nodeTransform.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+            Matrix4x4? nodeXform = isSkinned ? (Matrix4x4?)null : nodeTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+            MeshBuffer buffer = new MeshBuffer();
 
             foreach (var ms in meshSets)
             {
-                if (ms.VertexListIndex < 0 || ms.VertexListIndex >= objData.VertexLists.Count ||
-                    ms.PrimitiveListIndex < 0 || ms.PrimitiveListIndex >= objData.PrimitiveLists.Count)
-                {
-                    continue;
-                }
-
                 var vList = objData.VertexLists[ms.VertexListIndex];
-                var pList = objData.PrimitiveLists[ms.PrimitiveListIndex];
-                int baseOffset = positions.Count;
-                bool meshSetSkinned = vList.BoneMatrixIndices != null && vList.BoneMatrixIndices.Count > 0;
-
-                for (int v = 0; v < vList.Vertices.Count; v++)
-                {
-                    NinjaVertex vert = vList.Vertices[v];
-                    if (vert == null) continue;
-
-                    Vector3 pos = vert.Position.GetValueOrDefault();
-                    pos.x *= -1f * scale;
-                    pos.y *= scale;
-                    pos.z *= scale;
-
-                    Vector3 norm = vert.Normals.GetValueOrDefault(Vector3.up);
-                    norm.x *= -1f;
-
-                    if (!isSkinned)
+                Func<byte, int> remap = isSkinned ? (b) => {
+                    if (vList.BoneMatrixIndices != null && b < vList.BoneMatrixIndices.Count)
                     {
-                        pos = nodeToLocal.MultiplyPoint3x4(pos);
-                        norm = nodeToLocal.MultiplyVector(norm).normalized;
+                        int g = vList.BoneMatrixIndices[b];
+                        if (globalToLocal.TryGetValue(g, out int l)) return l;
                     }
+                    return 0;
+                } : (Func<byte, int>)null;
 
-                    positions.Add(pos);
-                    normals.Add(norm);
-
-                    Vector3 tan = vert.Tangent.GetValueOrDefault(Vector3.right);
-                    Vector3 tanScaled = new Vector3(-tan.x, tan.y, tan.z);
-                    if (!isSkinned) tanScaled = nodeToLocal.MultiplyVector(tanScaled).normalized;
-                    tangents.Add(new Vector4(tanScaled.x, tanScaled.y, tanScaled.z, 1.0f));
-
-                    if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 0)
-                    {
-                        Vector2 uv = vert.TextureCoordinates[0];
-                        uvs.Add(new Vector2(uv.x, 1.0f - uv.y));
-                    }
-                    else
-                    {
-                        uvs.Add(Vector2.zero);
-                    }
-
-                    if (vert.VertexColours != null && vert.VertexColours.Length >= 4)
-                    {
-                        colors.Add(new Color32(vert.VertexColours[2], vert.VertexColours[1], vert.VertexColours[0], vert.VertexColours[3]));
-                    }
-                    else
-                    {
-                        colors.Add(new Color32(255, 255, 255, 255));
-                    }
-
-                    if (isSkinned)
-                    {
-                        BoneWeight bw = new BoneWeight();
-                        if (meshSetSkinned && vert.Weight.HasValue && vert.MatrixIndices != null && vert.MatrixIndices.Length >= 4)
-                        {
-                            bw.boneIndex0 = RemapLocalBoneIndex(vert.MatrixIndices[0], vList.BoneMatrixIndices, globalToLocalBoneMap);
-                            bw.boneIndex1 = RemapLocalBoneIndex(vert.MatrixIndices[1], vList.BoneMatrixIndices, globalToLocalBoneMap);
-                            bw.boneIndex2 = RemapLocalBoneIndex(vert.MatrixIndices[2], vList.BoneMatrixIndices, globalToLocalBoneMap);
-                            bw.boneIndex3 = RemapLocalBoneIndex(vert.MatrixIndices[3], vList.BoneMatrixIndices, globalToLocalBoneMap);
-
-                            Vector3 w = vert.Weight.Value;
-                            bw.weight0 = w.x;
-                            bw.weight1 = w.y;
-                            bw.weight2 = w.z;
-                            bw.weight3 = Mathf.Max(0f, 1.0f - (w.x + w.y + w.z));
-                        }
-                        else
-                        {
-                            int localIdx = globalToLocalBoneMap.ContainsKey(nodeIndex) ? globalToLocalBoneMap[nodeIndex] : 0;
-                            bw.boneIndex0 = localIdx;
-                            bw.weight0 = 1.0f;
-                        }
-                        boneWeights.Add(bw);
-                    }
-                }
-
-                List<int> decodedTris = DecodeIndices(pList);
-                for (int t = 0; t < decodedTris.Count; t++)
-                {
-                    triangles.Add(baseOffset + decodedTris[t]);
-                }
+                int fallbackLocal = globalToLocal.TryGetValue(nodeIdx, out int lf) ? lf : 0;
+                buffer.AppendMeshSet(objData, ms, scale, nodeXform, remap, fallbackLocal, 0);
             }
 
-            if (positions.Count == 0) return;
+            Mesh mesh = buffer.BuildMesh($"{assetName}_Node_{nodeIdx}_Mat_{matIdx}");
+            if (mesh == null) return;
 
-            Mesh mesh = new Mesh { name = $"{assetName}_Node_{nodeIndex}_Mat_{materialIndex}" };
-            if (positions.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-
-            mesh.vertices = positions.ToArray();
-            mesh.normals = normals.ToArray();
-            mesh.tangents = tangents.ToArray();
-            mesh.uv = uvs.ToArray();
-            mesh.colors32 = colors.ToArray();
-            mesh.triangles = triangles.ToArray();
-
-            Material assignedMat = (materialIndex >= 0 && materialIndex < materials.Count && materials[materialIndex] != null)
-                ? materials[materialIndex] : new Material(Shader.Find("Standard"));
+            Material assignedMat = GetMaterialOrStandard(matIdx, materials);
+            if (ctx != null) ctx.AddObjectToAsset($"Mesh_Node_{nodeIdx}_Mat_{matIdx}", mesh);
 
             if (isSkinned)
             {
-                mesh.boneWeights = boneWeights.ToArray();
-                Transform[] localBones = new Transform[localBonePalette.Count];
-                Matrix4x4[] localBindposes = new Matrix4x4[localBonePalette.Count];
-                for (int b = 0; b < localBonePalette.Count; b++)
+                Transform[] localBones = new Transform[localPalette.Count];
+                Matrix4x4[] localBinds = new Matrix4x4[localPalette.Count];
+                for (int b = 0; b < localPalette.Count; b++)
                 {
-                    int gIdx = localBonePalette[b];
-                    localBones[b] = rootGO.transform.GetChild(gIdx);
-                    localBindposes[b] = localBones[b].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+                    localBones[b] = rootGO.transform.GetChild(localPalette[b]);
+                    localBinds[b] = localBones[b].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
                 }
-
-                mesh.bindposes = localBindposes;
+                mesh.bindposes = localBinds;
                 mesh.RecalculateBounds();
-
-                if (ctx != null) ctx.AddObjectToAsset($"Mesh_Node_{nodeIndex}_Mat_{materialIndex}", mesh);
 
                 SkinnedMeshRenderer smr = targetGO.AddComponent<SkinnedMeshRenderer>();
                 smr.sharedMesh = mesh;
                 smr.bones = localBones;
-                smr.rootBone = nodeTransform;
+                smr.rootBone = nodeTr;
                 smr.sharedMaterial = assignedMat;
             }
             else
             {
                 mesh.RecalculateBounds();
-                if (ctx != null) ctx.AddObjectToAsset($"Mesh_Node_{nodeIndex}_Mat_{materialIndex}", mesh);
-
-                MeshFilter mf = targetGO.AddComponent<MeshFilter>();
-                mf.sharedMesh = mesh;
-                MeshRenderer mr = targetGO.AddComponent<MeshRenderer>();
-                mr.sharedMaterial = assignedMat;
+                targetGO.AddComponent<MeshFilter>().sharedMesh = mesh;
+                targetGO.AddComponent<MeshRenderer>().sharedMaterial = assignedMat;
             }
-        }
-
-        private static int RemapLocalBoneIndex(byte paletteIndex, List<int> vListBonePalette, Dictionary<int, int> globalToLocalMap)
-        {
-            if (vListBonePalette != null && paletteIndex < vListBonePalette.Count)
-            {
-                int globalNodeIdx = vListBonePalette[paletteIndex];
-                if (globalToLocalMap.TryGetValue(globalNodeIdx, out int localIdx))
-                {
-                    return localIdx;
-                }
-            }
-            return 0;
         }
         #endregion
 
-        #region Mode 3: Individual Sub-Objects (Legacy Hierarchy)
+        #region Mode 3: Individual Sub-Objects
         private static void BuildIndividualSubObjects(
             NinjaObject objData,
             GameObject rootGO,
@@ -526,41 +262,34 @@ namespace SilentTools
             string assetName,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
-            int subObjIndex = 0;
+            int subObjIdx = 0;
             foreach (NinjaSubObject subObj in objData.SubObjects)
             {
-                foreach (NinjaMeshSet meshSet in subObj.MeshSets)
+                foreach (NinjaMeshSet ms in subObj.MeshSets)
                 {
-                    if (meshSet.VertexListIndex < 0 || meshSet.VertexListIndex >= objData.VertexLists.Count ||
-                        meshSet.PrimitiveListIndex < 0 || meshSet.PrimitiveListIndex >= objData.PrimitiveLists.Count)
-                    {
+                    if (ms.VertexListIndex < 0 || ms.VertexListIndex >= objData.VertexLists.Count ||
+                        ms.PrimitiveListIndex < 0 || ms.PrimitiveListIndex >= objData.PrimitiveLists.Count)
                         continue;
-                    }
 
-                    NinjaVertexList vList = objData.VertexLists[meshSet.VertexListIndex];
-                    NinjaPrimitiveList pList = objData.PrimitiveLists[meshSet.PrimitiveListIndex];
-
-                    Transform parentNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < allNodeTransforms.Count)
-                        ? allNodeTransforms[meshSet.NodeIndex] : rootGO.transform;
+                    var vList = objData.VertexLists[ms.VertexListIndex];
+                    Transform parentTr = (ms.NodeIndex >= 0 && ms.NodeIndex < allNodeTransforms.Count)
+                        ? allNodeTransforms[ms.NodeIndex] : rootGO.transform;
 
                     bool isSkinned = vList.BoneMatrixIndices.Count > 0;
+                    Matrix4x4? nodeXform = (!isSkinned && parentTr != rootGO.transform)
+                        ? parentTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix : (Matrix4x4?)null;
 
-                    Matrix4x4? nodeLocalXform = null;
-                    if (!isSkinned && parentNode != rootGO.transform)
-                    {
-                        nodeLocalXform = parentNode.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
-                    }
+                    MeshBuffer buffer = new MeshBuffer();
+                    buffer.AppendMeshSet(objData, ms, scale, nodeXform, null, 0, 0);
 
-                    Mesh mesh = CreateUnityMesh(vList, pList, scale, $"{assetName}_Mesh_{subObjIndex}", nodeLocalXform);
+                    Mesh mesh = buffer.BuildMesh($"{assetName}_Mesh_{subObjIdx}");
                     if (mesh == null) continue;
 
-                    if (ctx != null) ctx.AddObjectToAsset($"Mesh_{subObjIndex}", mesh);
+                    if (ctx != null) ctx.AddObjectToAsset($"Mesh_{subObjIdx}", mesh);
 
-                    GameObject meshGO = new GameObject($"SubObj_{subObjIndex}");
-                    meshGO.transform.SetParent(parentNode, false);
-
-                    Material mat = (meshSet.MaterialIndex >= 0 && meshSet.MaterialIndex < materials.Count)
-                        ? materials[meshSet.MaterialIndex] : new Material(Shader.Find("Standard"));
+                    GameObject meshGO = new GameObject($"SubObj_{subObjIdx}");
+                    meshGO.transform.SetParent(parentTr, false);
+                    Material mat = GetMaterialOrStandard(ms.MaterialIndex, materials);
 
                     if (isSkinned)
                     {
@@ -569,35 +298,33 @@ namespace SilentTools
                         smr.sharedMaterial = mat;
 
                         Transform[] bones = new Transform[vList.BoneMatrixIndices.Count];
-                        Matrix4x4[] subBindPoses = new Matrix4x4[vList.BoneMatrixIndices.Count];
+                        Matrix4x4[] binds = new Matrix4x4[vList.BoneMatrixIndices.Count];
                         for (int b = 0; b < vList.BoneMatrixIndices.Count; b++)
                         {
-                            int nodeIdx = vList.BoneMatrixIndices[b];
-                            if (nodeIdx >= 0 && nodeIdx < allNodeTransforms.Count)
+                            int nIdx = vList.BoneMatrixIndices[b];
+                            if (nIdx >= 0 && nIdx < allNodeTransforms.Count)
                             {
-                                bones[b] = allNodeTransforms[nodeIdx];
-                                subBindPoses[b] = allNodeTransforms[nodeIdx].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+                                bones[b] = allNodeTransforms[nIdx];
+                                binds[b] = allNodeTransforms[nIdx].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
                             }
                         }
-                        mesh.bindposes = subBindPoses;
+                        mesh.bindposes = binds;
                         smr.bones = bones;
-                        smr.rootBone = parentNode;
+                        smr.rootBone = parentTr;
                     }
                     else
                     {
-                        MeshFilter mf = meshGO.AddComponent<MeshFilter>();
-                        mf.sharedMesh = mesh;
-                        MeshRenderer mr = meshGO.AddComponent<MeshRenderer>();
-                        mr.sharedMaterial = mat;
+                        meshGO.AddComponent<MeshFilter>().sharedMesh = mesh;
+                        meshGO.AddComponent<MeshRenderer>().sharedMaterial = mat;
                     }
 
-                    subObjIndex++;
+                    subObjIdx++;
                 }
             }
         }
         #endregion
 
-        #region Geometry & Triangulation Utility
+        #region Helpers & MeshBuffer
         public static Mesh CreateUnityMesh(
             NinjaVertexList vList,
             NinjaPrimitiveList pList,
@@ -606,151 +333,40 @@ namespace SilentTools
             Matrix4x4? transformMatrix = null)
         {
             if (vList == null || vList.Vertices == null || vList.Vertices.Count == 0) return null;
+            NinjaObject dummy = new NinjaObject();
+            dummy.VertexLists.Add(vList);
+            dummy.PrimitiveLists.Add(pList);
+            NinjaMeshSet ms = new NinjaMeshSet { VertexListIndex = 0, PrimitiveListIndex = 0 };
 
-            Mesh mesh = new Mesh { name = name };
-            if (vList.Vertices.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-
-            Vector3[] positions = new Vector3[vList.Vertices.Count];
-            Vector3[] normals = new Vector3[vList.Vertices.Count];
-            Vector4[] tangents = new Vector4[vList.Vertices.Count];
-            Color32[] colors = new Color32[vList.Vertices.Count];
-            Vector2[] uv0 = new Vector2[vList.Vertices.Count];
-            BoneWeight[] boneWeights = new BoneWeight[vList.Vertices.Count];
-
-            bool hasNormals = false, hasTangents = false, hasColors = false, hasUV = false, hasWeights = false;
-
-            Matrix4x4 xform = transformMatrix.HasValue ? transformMatrix.Value : Matrix4x4.identity;
-            bool applyXform = transformMatrix.HasValue && transformMatrix.Value != Matrix4x4.identity;
-
-            for (int i = 0; i < vList.Vertices.Count; i++)
-            {
-                NinjaVertex v = vList.Vertices[i];
-                if (v == null) continue;
-
-                if (v.Position.HasValue)
-                {
-                    Vector3 pos = v.Position.Value;
-                    pos.x *= -1f * scale;
-                    pos.y *= scale;
-                    pos.z *= scale;
-
-                    if (applyXform) pos = xform.MultiplyPoint3x4(pos);
-                    positions[i] = pos;
-                }
-
-                if (v.Normals.HasValue)
-                {
-                    hasNormals = true;
-                    Vector3 n = v.Normals.Value;
-                    n.x *= -1f;
-
-                    if (applyXform) n = xform.MultiplyVector(n).normalized;
-                    normals[i] = n;
-                }
-
-                if (v.Tangent.HasValue)
-                {
-                    hasTangents = true;
-                    Vector3 t = v.Tangent.Value;
-                    Vector3 tScaled = new Vector3(-t.x, t.y, t.z);
-
-                    if (applyXform) tScaled = xform.MultiplyVector(tScaled).normalized;
-                    tangents[i] = new Vector4(tScaled.x, tScaled.y, tScaled.z, 1.0f);
-                }
-
-                if (v.VertexColours != null && v.VertexColours.Length >= 4)
-                {
-                    hasColors = true;
-                    colors[i] = new Color32(v.VertexColours[2], v.VertexColours[1], v.VertexColours[0], v.VertexColours[3]);
-                }
-
-                if (v.TextureCoordinates != null && v.TextureCoordinates.Count > 0)
-                {
-                    hasUV = true;
-                    Vector2 uv = v.TextureCoordinates[0];
-                    uv.y = 1.0f - uv.y;
-                    uv0[i] = uv;
-                }
-
-                if (v.Weight.HasValue && v.MatrixIndices != null && v.MatrixIndices.Length >= 4)
-                {
-                    hasWeights = true;
-                    BoneWeight bw = new BoneWeight
-                    {
-                        boneIndex0 = v.MatrixIndices[0],
-                        boneIndex1 = v.MatrixIndices[1],
-                        boneIndex2 = v.MatrixIndices[2],
-                        boneIndex3 = v.MatrixIndices[3]
-                    };
-
-                    Vector3 w = v.Weight.Value;
-                    bw.weight0 = w.x;
-                    bw.weight1 = w.y;
-                    bw.weight2 = w.z;
-                    bw.weight3 = Mathf.Max(0f, 1.0f - (w.x + w.y + w.z));
-                    boneWeights[i] = bw;
-                }
-            }
-
-            mesh.vertices = positions;
-            if (hasNormals) mesh.normals = normals;
-            if (hasTangents) mesh.tangents = tangents;
-            if (hasColors) mesh.colors32 = colors;
-            if (hasUV) mesh.uv = uv0;
-            if (hasWeights) mesh.boneWeights = boneWeights;
-
-            List<int> triangles = DecodeIndices(pList);
-            if (triangles.Count >= 3)
-            {
-                mesh.triangles = triangles.ToArray();
-            }
-
-            if (!hasNormals) mesh.RecalculateNormals();
-            mesh.RecalculateBounds();
-
-            return mesh;
+            MeshBuffer buffer = new MeshBuffer();
+            buffer.AppendMeshSet(dummy, ms, scale, transformMatrix, null, 0, 0);
+            return buffer.BuildMesh(name);
         }
 
         public static List<int> DecodeIndices(NinjaPrimitiveList pList)
         {
             List<int> triangles = new List<int>();
-            if (pList == null || pList.IndexIndices == null || pList.IndexIndices.Count < 3) return triangles;
+            if (pList?.IndexIndices == null || pList.IndexIndices.Count < 3) return triangles;
 
             if (pList.StripIndices != null && pList.StripIndices.Count > 0)
             {
-                int indexCursor = 0;
+                int cursor = 0;
                 for (int s = 0; s < pList.StripIndices.Count; s++)
                 {
-                    int stripLen = pList.StripIndices[s];
-                    if (stripLen < 3 || indexCursor + stripLen > pList.IndexIndices.Count)
-                    {
-                        indexCursor += stripLen;
-                        continue;
-                    }
+                    int len = pList.StripIndices[s];
+                    if (len < 3 || cursor + len > pList.IndexIndices.Count) { cursor += len; continue; }
 
-                    for (int i = 0; i < stripLen - 2; i++)
+                    for (int i = 0; i < len - 2; i++)
                     {
-                        ushort a = pList.IndexIndices[indexCursor + i];
-                        ushort b = pList.IndexIndices[indexCursor + i + 1];
-                        ushort c = pList.IndexIndices[indexCursor + i + 2];
-
+                        ushort a = pList.IndexIndices[cursor + i];
+                        ushort b = pList.IndexIndices[cursor + i + 1];
+                        ushort c = pList.IndexIndices[cursor + i + 2];
                         if (a == b || b == c || a == c) continue;
 
-                        if (i % 2 == 1)
-                        {
-                            triangles.Add(a);
-                            triangles.Add(b);
-                            triangles.Add(c);
-                        }
-                        else
-                        {
-                            triangles.Add(a);
-                            triangles.Add(c);
-                            triangles.Add(b);
-                        }
+                        if (i % 2 == 1) { triangles.Add(a); triangles.Add(b); triangles.Add(c); }
+                        else { triangles.Add(a); triangles.Add(c); triangles.Add(b); }
                     }
-
-                    indexCursor += stripLen;
+                    cursor += len;
                 }
             }
             else
@@ -760,16 +376,150 @@ namespace SilentTools
                     ushort a = pList.IndexIndices[i];
                     ushort b = pList.IndexIndices[i + 1];
                     ushort c = pList.IndexIndices[i + 2];
-
                     if (a == b || b == c || a == c) continue;
-
-                    triangles.Add(a);
-                    triangles.Add(c);
-                    triangles.Add(b);
+                    triangles.Add(a); triangles.Add(c); triangles.Add(b);
                 }
             }
-
             return triangles;
+        }
+
+        private static Material GetMaterialOrStandard(int matIdx, List<Material> materials)
+        {
+            return (matIdx >= 0 && matIdx < materials.Count && materials[matIdx] != null)
+                ? materials[matIdx] : new Material(Shader.Find("Standard"));
+        }
+
+        private static Material[] MapMaterials(List<int> matKeys, List<Material> materials)
+        {
+            Material[] array = new Material[matKeys.Count];
+            for (int i = 0; i < matKeys.Count; i++) array[i] = GetMaterialOrStandard(matKeys[i], materials);
+            return array;
+        }
+
+        private class MeshBuffer
+        {
+            public readonly List<Vector3> Positions = new List<Vector3>();
+            public readonly List<Vector3> Normals = new List<Vector3>();
+            public readonly List<Vector4> Tangents = new List<Vector4>();
+            public readonly List<Color32> Colors = new List<Color32>();
+            public readonly List<Vector2> UVs = new List<Vector2>();
+            public readonly List<BoneWeight> BoneWeights = new List<BoneWeight>();
+            public readonly Dictionary<int, List<int>> SubmeshTriangles = new Dictionary<int, List<int>>();
+            public bool HasWeights;
+
+            public List<int> GetSortedSubmeshKeys()
+            {
+                var keys = new List<int>(SubmeshTriangles.Keys);
+                keys.Sort();
+                return keys;
+            }
+
+            public void AppendMeshSet(
+                NinjaObject objData,
+                NinjaMeshSet meshSet,
+                float scale,
+                Matrix4x4? localTransform,
+                Func<byte, int> bonePaletteRemap,
+                int fallbackBoneIdx,
+                int submeshKey)
+            {
+                if (meshSet.VertexListIndex < 0 || meshSet.VertexListIndex >= objData.VertexLists.Count ||
+                    meshSet.PrimitiveListIndex < 0 || meshSet.PrimitiveListIndex >= objData.PrimitiveLists.Count)
+                    return;
+
+                var vList = objData.VertexLists[meshSet.VertexListIndex];
+                var pList = objData.PrimitiveLists[meshSet.PrimitiveListIndex];
+                int baseOffset = Positions.Count;
+                bool isSkinned = vList.BoneMatrixIndices != null && vList.BoneMatrixIndices.Count > 0;
+                if (isSkinned) HasWeights = true;
+
+                bool applyXform = localTransform.HasValue && localTransform.Value != Matrix4x4.identity;
+                Matrix4x4 xform = localTransform.GetValueOrDefault(Matrix4x4.identity);
+
+                for (int v = 0; v < vList.Vertices.Count; v++)
+                {
+                    NinjaVertex vert = vList.Vertices[v];
+                    if (vert == null) continue;
+
+                    Vector3 pos = vert.Position.GetValueOrDefault();
+                    pos = new Vector3(-pos.x * scale, pos.y * scale, pos.z * scale);
+                    if (applyXform) pos = xform.MultiplyPoint3x4(pos);
+                    Positions.Add(pos);
+
+                    Vector3 norm = vert.Normals.GetValueOrDefault(Vector3.up);
+                    norm = new Vector3(-norm.x, norm.y, norm.z).normalized;
+                    if (applyXform) norm = xform.MultiplyVector(norm).normalized;
+                    Normals.Add(norm);
+
+                    Vector3 tan = vert.Tangent.GetValueOrDefault(Vector3.right);
+                    Vector3 tanScaled = new Vector3(-tan.x, tan.y, tan.z).normalized;
+                    if (applyXform) tanScaled = xform.MultiplyVector(tanScaled).normalized;
+                    Tangents.Add(new Vector4(tanScaled.x, tanScaled.y, tanScaled.z, 1.0f));
+
+                    if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 0)
+                        UVs.Add(new Vector2(vert.TextureCoordinates[0].x, 1.0f - vert.TextureCoordinates[0].y));
+                    else
+                        UVs.Add(Vector2.zero);
+
+                    if (vert.VertexColours != null && vert.VertexColours.Length >= 4)
+                        Colors.Add(new Color32(vert.VertexColours[2], vert.VertexColours[1], vert.VertexColours[0], vert.VertexColours[3]));
+                    else
+                        Colors.Add(new Color32(255, 255, 255, 255));
+
+                    BoneWeight bw = new BoneWeight();
+                    if (isSkinned && vert.Weight.HasValue && vert.MatrixIndices != null && vert.MatrixIndices.Length >= 4)
+                    {
+                        bw.boneIndex0 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[0]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[0] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[0]] : fallbackBoneIdx);
+                        bw.boneIndex1 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[1]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[1] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[1]] : fallbackBoneIdx);
+                        bw.boneIndex2 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[2]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[2] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[2]] : fallbackBoneIdx);
+                        bw.boneIndex3 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[3]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[3] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[3]] : fallbackBoneIdx);
+
+                        Vector3 w = vert.Weight.Value;
+                        bw.weight0 = w.x;
+                        bw.weight1 = w.y;
+                        bw.weight2 = w.z;
+                        bw.weight3 = Mathf.Max(0f, 1.0f - (w.x + w.y + w.z));
+                    }
+                    else
+                    {
+                        bw.boneIndex0 = fallbackBoneIdx;
+                        bw.weight0 = 1.0f;
+                    }
+                    BoneWeights.Add(bw);
+                }
+
+                if (!SubmeshTriangles.TryGetValue(submeshKey, out List<int> tris))
+                {
+                    tris = new List<int>();
+                    SubmeshTriangles[submeshKey] = tris;
+                }
+
+                List<int> decoded = DecodeIndices(pList);
+                for (int t = 0; t < decoded.Count; t++)
+                    tris.Add(baseOffset + decoded[t]);
+            }
+
+            public Mesh BuildMesh(string meshName)
+            {
+                if (Positions.Count == 0) return null;
+                Mesh mesh = new Mesh { name = meshName };
+                if (Positions.Count > 65535) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+
+                mesh.vertices = Positions.ToArray();
+                mesh.normals = Normals.ToArray();
+                mesh.tangents = Tangents.ToArray();
+                mesh.uv = UVs.ToArray();
+                mesh.colors32 = Colors.ToArray();
+                if (HasWeights) mesh.boneWeights = BoneWeights.ToArray();
+
+                var sortedKeys = GetSortedSubmeshKeys();
+                mesh.subMeshCount = sortedKeys.Count;
+                for (int i = 0; i < sortedKeys.Count; i++)
+                    mesh.SetTriangles(SubmeshTriangles[sortedKeys[i]], i);
+
+                mesh.RecalculateBounds();
+                return mesh;
+            }
         }
         #endregion
     }

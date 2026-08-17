@@ -1,6 +1,7 @@
 // File: Marathon/UnityParsers/NinjaMaterialResolver.cs
 using UnityEngine;
 using UnityEditor;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using Marathon.Formats.Mesh.Ninja;
@@ -29,13 +30,13 @@ namespace SilentTools
 
     public static class NinjaMaterialResolver
     {
-        private static readonly string[] TextureExtensions = new string[] {
+        private static readonly string[] TextureExtensions = {
             ".png", ".PNG", ".tga", ".TGA", ".dds", ".DDS", ".psd", ".PSD",
             ".jpg", ".JPG", ".jpeg", ".JPEG", ".bmp", ".BMP", ".tif", ".TIF",
             ".tiff", ".TIFF", ".xvr", ".XVR"
         };
 
-        private static readonly string[] TextureListExtensions = new string[] {
+        private static readonly string[] TextureListExtensions = {
             ".xnt", ".XNT", ".gnt", ".GNT", ".znt", ".ZNT", ".cnt", ".CNT", ".ent", ".ENT", ".int", ".INT"
         };
 
@@ -51,17 +52,10 @@ namespace SilentTools
                 string ext = Path.GetExtension(name);
                 if (string.IsNullOrEmpty(ext)) break;
                 string extLower = ext.ToLowerInvariant();
-                if (extLower == ".xvr" || extLower == ".dds" || extLower == ".tga" || extLower == ".png" ||
-                    extLower == ".jpg" || extLower == ".jpeg" || extLower == ".bmp" || extLower == ".tif" ||
-                    extLower == ".tiff" || extLower == ".psd" || extLower == ".xnt" || extLower == ".gnt" ||
-                    extLower == ".znt" || extLower == ".cnt" || extLower == ".ent" || extLower == ".int")
-                {
+                if (extLower is ".xvr" or ".dds" or ".tga" or ".png" or ".jpg" or ".jpeg" or ".bmp" or ".tif" or ".tiff" or ".psd" or ".xnt" or ".gnt" or ".znt" or ".cnt" or ".ent" or ".int")
                     name = Path.GetFileNameWithoutExtension(name);
-                }
                 else
-                {
                     break;
-                }
             }
             return name;
         }
@@ -69,44 +63,33 @@ namespace SilentTools
         /// <summary>
         /// Auto-resolves associated external texture list files (.xnt, .gnt, .znt) if the embedded texture list is missing.
         /// </summary>
-        public static NinjaTextureList ResolveTextureList(
-            NinjaTextureList embeddedTexList,
-            string assetPath,
-            UnityEditor.AssetImporters.AssetImportContext ctx = null)
+        public static NinjaTextureList ResolveTextureList(NinjaTextureList embeddedTexList, string assetPath, UnityEditor.AssetImporters.AssetImportContext ctx = null)
         {
-            if (embeddedTexList != null && embeddedTexList.NinjaTextureFiles != null && embeddedTexList.NinjaTextureFiles.Count > 0)
+            if (embeddedTexList?.NinjaTextureFiles != null && embeddedTexList.NinjaTextureFiles.Count > 0)
                 return embeddedTexList;
 
             if (string.IsNullOrEmpty(assetPath)) return embeddedTexList;
-
-            string baseDirectory = Path.GetDirectoryName(assetPath);
-            string baseFileName = Path.GetFileNameWithoutExtension(assetPath);
+            string baseDir = Path.GetDirectoryName(assetPath);
+            string baseName = Path.GetFileNameWithoutExtension(assetPath);
 
             foreach (string ext in TextureListExtensions)
             {
-                string candidatePath = Path.Combine(baseDirectory, baseFileName + ext).Replace('\\', '/');
-                if (File.Exists(candidatePath))
+                string candidate = Path.Combine(baseDir, baseName + ext).Replace('\\', '/');
+                if (File.Exists(candidate))
                 {
                     try
                     {
-                        NinjaNext xntLoader = new NinjaNext();
-                        xntLoader.Load(candidatePath);
-                        if (xntLoader.Data.TextureList != null && xntLoader.Data.TextureList.NinjaTextureFiles != null && xntLoader.Data.TextureList.NinjaTextureFiles.Count > 0)
+                        NinjaNext loader = new NinjaNext();
+                        loader.Load(candidate);
+                        if (loader.Data.TextureList?.NinjaTextureFiles != null && loader.Data.TextureList.NinjaTextureFiles.Count > 0)
                         {
-                            if (ctx != null)
-                            {
-                                ctx.DependsOnSourceAsset(candidatePath);
-                            }
-                            return xntLoader.Data.TextureList;
+                            ctx?.DependsOnSourceAsset(candidate);
+                            return loader.Data.TextureList;
                         }
                     }
-                    catch (System.Exception ex)
-                    {
-                        Debug.LogWarning($"Could not load associated texture list file {candidatePath}:\n{ex}");
-                    }
+                    catch { }
                 }
             }
-
             return embeddedTexList;
         }
 
@@ -126,43 +109,29 @@ namespace SilentTools
             List<Material> materials = new List<Material>();
             Shader stdShader = Shader.Find("NinjaNext/Standard");
             string modelFolderPath = Path.GetDirectoryName(ctx.assetPath).Replace('\\', '/');
-
-            // Automatically check for adjacent .xnt/.gnt texture list if missing
             texList = ResolveTextureList(texList, ctx.assetPath, ctx);
 
             for (int i = 0; i < objData.Materials.Count; i++)
             {
                 NinjaMaterial nMat = objData.Materials[i];
+                var matColour = objData.MaterialColours?.Find(c => c.Offset == nMat.MaterialColourOffset);
+                var matLogic = objData.MaterialLogics?.Find(l => l.Offset == nMat.MaterialLogicOffset);
+                var texMap = objData.TextureMaps?.Find(t => t.Offset == nMat.MaterialTexMapDescriptionOffset);
 
-                NinjaMaterialColours matColour = FindMaterialColour(objData, nMat.MaterialColourOffset);
-                NinjaMaterialLogic matLogic = FindMaterialLogic(objData, nMat.MaterialLogicOffset);
-                NinjaTextureMap texMap = FindTextureMap(objData, nMat.MaterialTexMapDescriptionOffset);
-
-                // Determine Material Name using ID, Type/Flags, Col, Logic, and TexMap
                 string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, namingMode);
-
                 Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, searchMode, modelFolderPath, searchDirectory, ctx);
 
                 if (location == MaterialLocation.UseExternalMaterials)
                 {
                     string foundPath = FindExistingMaterial(matName, modelFolderPath, searchMode, searchDirectory);
-
                     if (!string.IsNullOrEmpty(foundPath))
                     {
                         Material externalMat = AssetDatabase.LoadAssetAtPath<Material>(foundPath);
-                        if (externalMat != null)
-                        {
-                            materials.Add(externalMat);
-                            continue;
-                        }
+                        if (externalMat != null) { materials.Add(externalMat); continue; }
                     }
 
                     string targetFolder = ResolveTargetFolder(modelFolderPath, searchDirectory);
-                    if (!Directory.Exists(targetFolder))
-                    {
-                        Directory.CreateDirectory(targetFolder);
-                        AssetDatabase.Refresh();
-                    }
+                    if (!Directory.Exists(targetFolder)) { Directory.CreateDirectory(targetFolder); AssetDatabase.Refresh(); }
 
                     string newMatPath = $"{targetFolder}/{matName}.mat";
                     AssetDatabase.CreateAsset(mat, newMatPath);
@@ -174,254 +143,96 @@ namespace SilentTools
                     materials.Add(mat);
                 }
             }
-
             return materials;
         }
 
-        #region Offset Resolution Helpers
-        private static NinjaMaterialColours FindMaterialColour(NinjaObject objData, uint offset)
+        private static UnityEngine.Rendering.BlendMode MapNinjaBlendMode(Marathon.Formats.Mesh.Ninja.BlendMode ninjaBlend, UnityEngine.Rendering.BlendMode defaultBlend) => ninjaBlend switch
         {
-            if (offset == 0 || objData.MaterialColours == null) return null;
-            for (int i = 0; i < objData.MaterialColours.Count; i++)
-            {
-                if (objData.MaterialColours[i].Offset == offset) return objData.MaterialColours[i];
-            }
-            return null;
-        }
+            Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_SRCALPHA => UnityEngine.Rendering.BlendMode.SrcAlpha,
+            Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_INVSRCALPHA => UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)0 => UnityEngine.Rendering.BlendMode.Zero,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)1 => UnityEngine.Rendering.BlendMode.One,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)2 or (Marathon.Formats.Mesh.Ninja.BlendMode)0x306 => UnityEngine.Rendering.BlendMode.DstColor,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)3 => UnityEngine.Rendering.BlendMode.SrcColor,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)4 or (Marathon.Formats.Mesh.Ninja.BlendMode)0x307 => UnityEngine.Rendering.BlendMode.OneMinusDstColor,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)5 => UnityEngine.Rendering.BlendMode.SrcAlpha,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)6 => UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)7 or (Marathon.Formats.Mesh.Ninja.BlendMode)0x304 => UnityEngine.Rendering.BlendMode.DstAlpha,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)8 or (Marathon.Formats.Mesh.Ninja.BlendMode)0x305 => UnityEngine.Rendering.BlendMode.OneMinusDstAlpha,
+            (Marathon.Formats.Mesh.Ninja.BlendMode)9 => UnityEngine.Rendering.BlendMode.SrcAlphaSaturate,
+            _ => defaultBlend
+        };
 
-        private static NinjaMaterialLogic FindMaterialLogic(NinjaObject objData, uint offset)
+        private static UnityEngine.Rendering.BlendOp MapNinjaBlendOp(Marathon.Formats.Mesh.Ninja.BlendOperation ninjaOp) => (uint)ninjaOp switch
         {
-            if (offset == 0 || objData.MaterialLogics == null) return null;
-            for (int i = 0; i < objData.MaterialLogics.Count; i++)
-            {
-                if (objData.MaterialLogics[i].Offset == offset) return objData.MaterialLogics[i];
-            }
-            return null;
-        }
+            1 or 0x800A => UnityEngine.Rendering.BlendOp.Subtract,
+            2 or 0x800B => UnityEngine.Rendering.BlendOp.ReverseSubtract,
+            3 or 0x8007 => UnityEngine.Rendering.BlendOp.Min,
+            4 or 0x8008 => UnityEngine.Rendering.BlendOp.Max,
+            _ => UnityEngine.Rendering.BlendOp.Add
+        };
 
-        private static NinjaTextureMap FindTextureMap(NinjaObject objData, uint offset)
+        private static UnityEngine.Rendering.CompareFunction MapNinjaCompareFunction(Marathon.Formats.Mesh.Ninja.CMPFunction func) => (uint)func switch
         {
-            if (offset == 0 || objData.TextureMaps == null) return null;
-            for (int i = 0; i < objData.TextureMaps.Count; i++)
-            {
-                if (objData.TextureMaps[i].Offset == offset) return objData.TextureMaps[i];
-            }
-            return null;
-        }
+            1 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NEVER => UnityEngine.Rendering.CompareFunction.Never,
+            2 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESS => UnityEngine.Rendering.CompareFunction.Less,
+            3 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_EQUAL => UnityEngine.Rendering.CompareFunction.Equal,
+            4 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESSEQUAL => UnityEngine.Rendering.CompareFunction.LessEqual,
+            5 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATER => UnityEngine.Rendering.CompareFunction.Greater,
+            6 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NOTEQUAL => UnityEngine.Rendering.CompareFunction.NotEqual,
+            7 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATEREQUAL => UnityEngine.Rendering.CompareFunction.GreaterEqual,
+            8 or (uint)Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_ALWAYS => UnityEngine.Rendering.CompareFunction.Always,
+            _ => UnityEngine.Rendering.CompareFunction.LessEqual
+        };
 
-        private static int FindMaterialColourIndex(NinjaObject objData, uint offset)
+        private static string DetermineMaterialName(NinjaObject objData, NinjaTextureMap texMap, NinjaTextureList texList, string modelName, int index, MaterialNaming namingMode)
         {
-            if (offset == 0 || objData == null || objData.MaterialColours == null) return -1;
-            for (int i = 0; i < objData.MaterialColours.Count; i++)
+            if (namingMode == MaterialNaming.ByBaseTextureName && texMap?.NinjaTextureMapDescriptions != null && texMap.NinjaTextureMapDescriptions.Count > 0)
             {
-                if (objData.MaterialColours[i].Offset == offset) return i;
-            }
-            return -1;
-        }
-
-        private static int FindMaterialLogicIndex(NinjaObject objData, uint offset)
-        {
-            if (offset == 0 || objData == null || objData.MaterialLogics == null) return -1;
-            for (int i = 0; i < objData.MaterialLogics.Count; i++)
-            {
-                if (objData.MaterialLogics[i].Offset == offset) return i;
-            }
-            return -1;
-        }
-
-        private static int FindTextureMapIndex(NinjaObject objData, uint offset)
-        {
-            if (offset == 0 || objData == null || objData.TextureMaps == null) return -1;
-            for (int i = 0; i < objData.TextureMaps.Count; i++)
-            {
-                if (objData.TextureMaps[i].Offset == offset) return i;
-            }
-            return -1;
-        }
-        #endregion
-
-        #region Enum Mapping Helpers
-        private static UnityEngine.Rendering.BlendMode MapNinjaBlendMode(Marathon.Formats.Mesh.Ninja.BlendMode ninjaBlend, UnityEngine.Rendering.BlendMode defaultBlend)
-        {
-            switch (ninjaBlend)
-            {
-                case Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_SRCALPHA: return UnityEngine.Rendering.BlendMode.SrcAlpha;
-                case Marathon.Formats.Mesh.Ninja.BlendMode.NNE_BLENDMODE_INVSRCALPHA: return UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha;
-                default:
-                    uint val = (uint)ninjaBlend;
-                    switch (val)
-                    {
-                        case 0: return UnityEngine.Rendering.BlendMode.Zero;
-                        case 1: return UnityEngine.Rendering.BlendMode.One;
-                        case 2: return UnityEngine.Rendering.BlendMode.DstColor;
-                        case 3: return UnityEngine.Rendering.BlendMode.SrcColor;
-                        case 4: return UnityEngine.Rendering.BlendMode.OneMinusDstColor;
-                        case 5: return UnityEngine.Rendering.BlendMode.SrcAlpha;
-                        case 6: return UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha;
-                        case 7: return UnityEngine.Rendering.BlendMode.DstAlpha;
-                        case 8: return UnityEngine.Rendering.BlendMode.OneMinusDstAlpha;
-                        case 9: return UnityEngine.Rendering.BlendMode.SrcAlphaSaturate;
-                        case 0x304: return UnityEngine.Rendering.BlendMode.DstAlpha;
-                        case 0x305: return UnityEngine.Rendering.BlendMode.OneMinusDstAlpha;
-                        case 0x306: return UnityEngine.Rendering.BlendMode.DstColor;
-                        case 0x307: return UnityEngine.Rendering.BlendMode.OneMinusDstColor;
-                        default:
-                            if (System.Enum.IsDefined(typeof(UnityEngine.Rendering.BlendMode), (int)val))
-                                return (UnityEngine.Rendering.BlendMode)(int)val;
-                            return defaultBlend;
-                    }
-            }
-        }
-
-        private static UnityEngine.Rendering.BlendOp MapNinjaBlendOp(Marathon.Formats.Mesh.Ninja.BlendOperation ninjaOp)
-        {
-            switch (ninjaOp)
-            {
-                case Marathon.Formats.Mesh.Ninja.BlendOperation.NNE_BLENDOP_ADD: return UnityEngine.Rendering.BlendOp.Add;
-                default:
-                    uint val = (uint)ninjaOp;
-                    switch (val)
-                    {
-                        case 0: return UnityEngine.Rendering.BlendOp.Add;
-                        case 1:
-                        case 0x800A: return UnityEngine.Rendering.BlendOp.Subtract;
-                        case 2:
-                        case 0x800B: return UnityEngine.Rendering.BlendOp.ReverseSubtract;
-                        case 3:
-                        case 0x8007: return UnityEngine.Rendering.BlendOp.Min;
-                        case 4:
-                        case 0x8008: return UnityEngine.Rendering.BlendOp.Max;
-                        default: return UnityEngine.Rendering.BlendOp.Add;
-                    }
-            }
-        }
-
-        private static UnityEngine.Rendering.CompareFunction MapNinjaCompareFunction(Marathon.Formats.Mesh.Ninja.CMPFunction func)
-        {
-            switch (func)
-            {
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NEVER: return UnityEngine.Rendering.CompareFunction.Never;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESS: return UnityEngine.Rendering.CompareFunction.Less;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_EQUAL: return UnityEngine.Rendering.CompareFunction.Equal;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_LESSEQUAL: return UnityEngine.Rendering.CompareFunction.LessEqual;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATER: return UnityEngine.Rendering.CompareFunction.Greater;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_NOTEQUAL: return UnityEngine.Rendering.CompareFunction.NotEqual;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_GREATEREQUAL: return UnityEngine.Rendering.CompareFunction.GreaterEqual;
-                case Marathon.Formats.Mesh.Ninja.CMPFunction.NNE_CMPFUNC_ALWAYS: return UnityEngine.Rendering.CompareFunction.Always;
-                default:
-                    uint val = (uint)func;
-                    switch (val)
-                    {
-                        case 1: return UnityEngine.Rendering.CompareFunction.Never;
-                        case 2: return UnityEngine.Rendering.CompareFunction.Less;
-                        case 3: return UnityEngine.Rendering.CompareFunction.Equal;
-                        case 4: return UnityEngine.Rendering.CompareFunction.LessEqual;
-                        case 5: return UnityEngine.Rendering.CompareFunction.Greater;
-                        case 6: return UnityEngine.Rendering.CompareFunction.NotEqual;
-                        case 7: return UnityEngine.Rendering.CompareFunction.GreaterEqual;
-                        case 8: return UnityEngine.Rendering.CompareFunction.Always;
-                        default: return UnityEngine.Rendering.CompareFunction.LessEqual;
-                    }
-            }
-        }
-        #endregion
-
-        #region Material & Texture Resolution
-        private static string DetermineMaterialName(
-            NinjaObject objData,
-            NinjaTextureMap texMap,
-            NinjaTextureList texList,
-            string modelName,
-            int index,
-            MaterialNaming namingMode)
-        {
-            if (namingMode == MaterialNaming.ByBaseTextureName)
-            {
-                string texName = GetBaseTextureName(texMap, texList);
-                if (!string.IsNullOrEmpty(texName))
-                    return StripTextureExtensions(texName);
+                int texIdx = texMap.NinjaTextureMapDescriptions[0].Index;
+                if (texList?.NinjaTextureFiles != null && texIdx >= 0 && texIdx < texList.NinjaTextureFiles.Count)
+                {
+                    string baseTex = StripTextureExtensions(texList.NinjaTextureFiles[texIdx].FileName);
+                    if (!string.IsNullOrEmpty(baseTex)) return baseTex;
+                }
             }
 
             NinjaMaterial nMat = (objData != null && index < objData.Materials.Count) ? objData.Materials[index] : null;
-
-            int colIdx = (objData != null && nMat != null) ? FindMaterialColourIndex(objData, nMat.MaterialColourOffset) : -1;
-            int logicIdx = (objData != null && nMat != null) ? FindMaterialLogicIndex(objData, nMat.MaterialLogicOffset) : -1;
-            int texMapIdx = (objData != null && nMat != null) ? FindTextureMapIndex(objData, nMat.MaterialTexMapDescriptionOffset) : -1;
+            int colIdx = objData?.MaterialColours?.FindIndex(c => c.Offset == nMat?.MaterialColourOffset) ?? -1;
+            int logicIdx = objData?.MaterialLogics?.FindIndex(l => l.Offset == nMat?.MaterialLogicOffset) ?? -1;
+            int texMapIdx = objData?.TextureMaps?.FindIndex(t => t.Offset == nMat?.MaterialTexMapDescriptionOffset) ?? -1;
 
             string typeStr = nMat != null ? nMat.Type.ToString().Replace("NND_MATTYPE_", "") : "Standard";
             if (string.IsNullOrEmpty(typeStr) || typeStr == "0") typeStr = "Standard";
-            else
-            {
-                typeStr = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(typeStr.ToLower());
-            }
+            else typeStr = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(typeStr.ToLower());
 
-            string colStr = colIdx >= 0 ? $"Col_{colIdx}" : "Col_None";
-            string logicStr = logicIdx >= 0 ? $"Logic_{logicIdx}" : "Logic_None";
-            string texMapStr = texMapIdx >= 0 ? $"TexMap_{texMapIdx}" : "TexMap_None";
-
-            string detailedName = $"{index}_{typeStr}_{colStr}_{logicStr}_{texMapStr}";
-
-            if (namingMode == MaterialNaming.ByModelAndMaterialName)
-            {
-                return $"{modelName}_{detailedName}";
-            }
-
-            return detailedName;
-        }
-
-        private static string GetBaseTextureName(NinjaTextureMap texMap, NinjaTextureList texList)
-        {
-            if (texMap != null && texMap.NinjaTextureMapDescriptions != null && texMap.NinjaTextureMapDescriptions.Count > 0)
-            {
-                int texIdx = texMap.NinjaTextureMapDescriptions[0].Index;
-                if (texList != null && texList.NinjaTextureFiles != null && texIdx >= 0 && texIdx < texList.NinjaTextureFiles.Count)
-                {
-                    return texList.NinjaTextureFiles[texIdx].FileName;
-                }
-            }
-            return null;
+            string detailedName = $"{index}_{typeStr}_{(colIdx >= 0 ? $"Col_{colIdx}" : "Col_None")}_{(logicIdx >= 0 ? $"Logic_{logicIdx}" : "Logic_None")}_{(texMapIdx >= 0 ? $"TexMap_{texMapIdx}" : "TexMap_None")}";
+            return namingMode == MaterialNaming.ByModelAndMaterialName ? $"{modelName}_{detailedName}" : detailedName;
         }
 
         private static Material CreateMaterialData(
-            NinjaMaterial nMat,
-            NinjaMaterialColours matColour,
-            NinjaMaterialLogic matLogic,
-            NinjaTextureMap texMap,
-            NinjaTextureList texList,
-            int index,
-            string matName,
-            Shader shader,
-            MaterialSearch searchMode,
-            string modelFolder,
-            string searchDir,
-            UnityEditor.AssetImporters.AssetImportContext ctx)
+            NinjaMaterial nMat, NinjaMaterialColours matColour, NinjaMaterialLogic matLogic,
+            NinjaTextureMap texMap, NinjaTextureList texList, int index, string matName, Shader shader,
+            MaterialSearch searchMode, string modelFolder, string searchDir, UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             Material mat = new Material(shader) { name = matName };
-
             uint rawFlags = nMat != null ? (uint)nMat.Flag : 0;
             uint rawType = nMat != null ? (uint)nMat.Type : 0;
 
             if (nMat != null)
             {
-                mat.SetFloat("_MaterialFlags", (float)rawFlags);
-                mat.SetFloat("_MaterialType", (float)rawType);
-                mat.SetFloat("_UserDefined", (float)nMat.UserDefined);
+                mat.SetFloat("_MaterialFlags", rawFlags);
+                mat.SetFloat("_MaterialType", rawType);
+                mat.SetFloat("_UserDefined", nMat.UserDefined);
             }
 
             mat.SetFloat("_EmissionPower", 1.0f);
             mat.SetFloat("_HDRIntensity", 1.0f);
             mat.SetFloat("_VertexColorScale", 1.0f);
             mat.SetFloat("_AlphaToMask", 0.0f);
-            mat.SetFloat("_Unlit", 0.0f);
-
-            if ((rawFlags & 0x02) != 0) mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-            else mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Back);
-
-            bool isUnlit = ((rawFlags & 0x04) != 0);
-            mat.SetFloat("_Unlit", isUnlit ? 1.0f : 0.0f);
-
-            if ((rawFlags & 0x08) != 0) mat.SetFloat("_DisableFog", 1.0f);
-            else mat.SetFloat("_DisableFog", 0.0f);
+            mat.SetInt("_Cull", (rawFlags & 0x02) != 0 ? (int)UnityEngine.Rendering.CullMode.Off : (int)UnityEngine.Rendering.CullMode.Back);
+            mat.SetFloat("_Unlit", (rawFlags & 0x04) != 0 ? 1.0f : 0.0f);
+            mat.SetFloat("_DisableFog", (rawFlags & 0x08) != 0 ? 1.0f : 0.0f);
 
             if (matColour != null)
             {
@@ -432,57 +243,51 @@ namespace SilentTools
                 mat.SetFloat("_Shininess", Mathf.Clamp01(matColour.Power / 100.0f));
             }
 
-            if (texMap != null && texMap.NinjaTextureMapDescriptions != null && texList != null && texList.NinjaTextureFiles != null)
+            if (texMap?.NinjaTextureMapDescriptions != null && texList?.NinjaTextureFiles != null)
             {
                 for (int d = 0; d < texMap.NinjaTextureMapDescriptions.Count; d++)
                 {
                     var desc = texMap.NinjaTextureMapDescriptions[d];
                     if (desc.Index >= 0 && desc.Index < texList.NinjaTextureFiles.Count)
                     {
-                        string rawTexFileName = texList.NinjaTextureFiles[desc.Index].FileName;
-                        if (string.IsNullOrEmpty(rawTexFileName)) continue;
+                        string rawTex = texList.NinjaTextureFiles[desc.Index].FileName;
+                        if (string.IsNullOrEmpty(rawTex)) continue;
 
-                        Texture2D tex = FindAndLoadTexture(rawTexFileName, searchMode, modelFolder, searchDir, ctx);
-                        if (tex != null)
+                        Texture2D tex = FindAndLoadTexture(rawTex, searchMode, modelFolder, searchDir, ctx);
+                        if (tex == null) continue;
+
+                        string lower = rawTex.ToLower();
+                        if (((desc.Type & 0x2000) != 0) || lower.Contains("env") || lower.Contains("matcap") || lower.Contains("refl"))
                         {
-                            string lowerName = rawTexFileName.ToLower();
-                            uint descType = desc.Type;
-
-                            bool isEnvMap = ((descType & 0x2000) != 0) || lowerName.Contains("env") || lowerName.Contains("matcap") || lowerName.Contains("refl");
-
-                            if (isEnvMap)
-                            {
-                                mat.SetTexture("_MatcapTex", tex);
-                                mat.SetFloat("_UseMatcap", 1.0f);
-                            }
-                            else if (d == 0 || lowerName.Contains("diff") || lowerName.Contains("alb") || lowerName.Contains("color") || lowerName.Contains("tex"))
-                            {
-                                mat.mainTexture = tex;
-                            }
-                            else if (d == 1)
-                            {
-                                mat.SetTexture("_MainTex2", tex);
-                                if ((rawFlags & 0x20) != 0) mat.SetFloat("_MainTex2BlendMode", 2.0f);
-                                else mat.SetFloat("_MainTex2BlendMode", 7.0f);
-                            }
-                            else if (d == 2)
-                            {
-                                mat.SetTexture("_MainTex3", tex);
-                                mat.SetFloat("_MainTex3BlendMode", 1.0f);
-                            }
-                            else if (lowerName.Contains("nrm") || lowerName.Contains("norm") || lowerName.Contains("bump") || (descType & 0x1000) != 0)
-                            {
-                                mat.SetTexture("_BumpMap", tex);
-                                mat.SetFloat("_BumpScale", 1.0f);
-                            }
-                            else if (lowerName.Contains("spec") || lowerName.Contains("gloss") || lowerName.Contains("pow") || lowerName.Contains("spc") || (descType & 0x4000) != 0)
-                            {
-                                mat.SetTexture("_SpecGlossMap", tex);
-                            }
-                            else if (lowerName.Contains("lmi") || lowerName.Contains("emis"))
-                            {
-                                mat.SetTexture("_EmissionMap", tex);
-                            }
+                            mat.SetTexture("_MatcapTex", tex);
+                            mat.SetFloat("_UseMatcap", 1.0f);
+                        }
+                        else if (d == 0 || lower.Contains("diff") || lower.Contains("alb") || lower.Contains("color") || lower.Contains("tex"))
+                        {
+                            mat.mainTexture = tex;
+                        }
+                        else if (d == 1)
+                        {
+                            mat.SetTexture("_MainTex2", tex);
+                            mat.SetFloat("_MainTex2BlendMode", (rawFlags & 0x20) != 0 ? 2.0f : 7.0f);
+                        }
+                        else if (d == 2)
+                        {
+                            mat.SetTexture("_MainTex3", tex);
+                            mat.SetFloat("_MainTex3BlendMode", 1.0f);
+                        }
+                        else if (lower.Contains("nrm") || lower.Contains("norm") || lower.Contains("bump") || (desc.Type & 0x1000) != 0)
+                        {
+                            mat.SetTexture("_BumpMap", tex);
+                            mat.SetFloat("_BumpScale", 1.0f);
+                        }
+                        else if (lower.Contains("spec") || lower.Contains("gloss") || lower.Contains("pow") || lower.Contains("spc") || (desc.Type & 0x4000) != 0)
+                        {
+                            mat.SetTexture("_SpecGlossMap", tex);
+                        }
+                        else if (lower.Contains("lmi") || lower.Contains("emis"))
+                        {
+                            mat.SetTexture("_EmissionMap", tex);
                         }
                     }
                 }
@@ -490,10 +295,10 @@ namespace SilentTools
 
             if (matLogic != null)
             {
-                UnityEngine.Rendering.BlendMode srcBlend = MapNinjaBlendMode(matLogic.SRCBlend, UnityEngine.Rendering.BlendMode.One);
-                UnityEngine.Rendering.BlendMode dstBlend = MapNinjaBlendMode(matLogic.DSTBlend, UnityEngine.Rendering.BlendMode.Zero);
-                UnityEngine.Rendering.BlendOp blendOp = MapNinjaBlendOp(matLogic.BlendOperation);
-                UnityEngine.Rendering.CompareFunction zTest = MapNinjaCompareFunction(matLogic.ZComparisonFunction);
+                var srcBlend = MapNinjaBlendMode(matLogic.SRCBlend, UnityEngine.Rendering.BlendMode.One);
+                var dstBlend = MapNinjaBlendMode(matLogic.DSTBlend, UnityEngine.Rendering.BlendMode.Zero);
+                var blendOp = MapNinjaBlendOp(matLogic.BlendOperation);
+                var zTest = MapNinjaCompareFunction(matLogic.ZComparisonFunction);
 
                 mat.SetInt("_SrcBlend", (int)srcBlend);
                 mat.SetInt("_DstBlend", (int)dstBlend);
@@ -511,37 +316,21 @@ namespace SilentTools
                     mat.SetFloat("_AlphaTest", 0.0f);
                 }
 
-                bool isAdditiveGlow = ((rawFlags & 0x18) != 0) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.One);
-                if (isAdditiveGlow) mat.SetFloat("_Unlit", 1.0f);
+                if ((rawFlags & 0x18) != 0 || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.One))
+                    mat.SetFloat("_Unlit", 1.0f);
 
-                bool isZWriteOn = matLogic.ZUpdate;
-                bool isAlphaTest = matLogic.Alpha && matLogic.AlphaRef > 0;
-                bool isOpaqueBlendMode = (!matLogic.Blend) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.Zero);
-
-                if (!matLogic.Blend || isOpaqueBlendMode || isZWriteOn)
+                bool isOpaque = (!matLogic.Blend) || (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.Zero);
+                if (!matLogic.Blend || isOpaque || matLogic.ZUpdate)
                 {
-                    if (isAlphaTest)
-                    {
-                        mat.SetFloat("_Mode", 1.0f);
-                        mat.SetOverrideTag("RenderType", "TransparentCutout");
-                        mat.SetOverrideTag("Queue", "AlphaTest");
-                        mat.SetOverrideTag("IgnoreProjector", "True");
-                        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
-                        mat.SetFloat("_CustomRenderQueue", (float)mat.renderQueue);
-                        mat.SetShaderPassEnabled("ShadowCaster", true);
-                        mat.SetShaderPassEnabled("DepthOnly", true);
-                    }
-                    else
-                    {
-                        mat.SetFloat("_Mode", 0.0f);
-                        mat.SetOverrideTag("RenderType", "Opaque");
-                        mat.SetOverrideTag("Queue", "Geometry");
-                        mat.SetOverrideTag("IgnoreProjector", "False");
-                        mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry;
-                        mat.SetFloat("_CustomRenderQueue", (float)mat.renderQueue);
-                        mat.SetShaderPassEnabled("ShadowCaster", true);
-                        mat.SetShaderPassEnabled("DepthOnly", true);
-                    }
+                    bool isCutout = matLogic.Alpha && matLogic.AlphaRef > 0;
+                    mat.SetFloat("_Mode", isCutout ? 1.0f : 0.0f);
+                    mat.SetOverrideTag("RenderType", isCutout ? "TransparentCutout" : "Opaque");
+                    mat.SetOverrideTag("Queue", isCutout ? "AlphaTest" : "Geometry");
+                    mat.SetOverrideTag("IgnoreProjector", isCutout ? "True" : "False");
+                    mat.renderQueue = (int)(isCutout ? UnityEngine.Rendering.RenderQueue.AlphaTest : UnityEngine.Rendering.RenderQueue.Geometry);
+                    mat.SetFloat("_CustomRenderQueue", (float)mat.renderQueue);
+                    mat.SetShaderPassEnabled("ShadowCaster", true);
+                    mat.SetShaderPassEnabled("DepthOnly", true);
                 }
                 else
                 {
@@ -553,202 +342,107 @@ namespace SilentTools
                     mat.SetShaderPassEnabled("ShadowCaster", false);
                     mat.SetShaderPassEnabled("DepthOnly", false);
 
-                    if (srcBlend == UnityEngine.Rendering.BlendMode.SrcAlpha && dstBlend == UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 2.0f);
-                    else if (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 3.0f);
-                    else if (dstBlend == UnityEngine.Rendering.BlendMode.One && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 4.0f);
-                    else if (srcBlend == UnityEngine.Rendering.BlendMode.DstColor && dstBlend == UnityEngine.Rendering.BlendMode.Zero && blendOp == UnityEngine.Rendering.BlendOp.Add)
-                        mat.SetFloat("_Mode", 5.0f);
-                    else if (blendOp == UnityEngine.Rendering.BlendOp.ReverseSubtract)
-                        mat.SetFloat("_Mode", 6.0f);
-                    else
-                        mat.SetFloat("_Mode", 7.0f);
+                    if (srcBlend == UnityEngine.Rendering.BlendMode.SrcAlpha && dstBlend == UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha && blendOp == UnityEngine.Rendering.BlendOp.Add) mat.SetFloat("_Mode", 2.0f);
+                    else if (srcBlend == UnityEngine.Rendering.BlendMode.One && dstBlend == UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha && blendOp == UnityEngine.Rendering.BlendOp.Add) mat.SetFloat("_Mode", 3.0f);
+                    else if (dstBlend == UnityEngine.Rendering.BlendMode.One && blendOp == UnityEngine.Rendering.BlendOp.Add) mat.SetFloat("_Mode", 4.0f);
+                    else if (srcBlend == UnityEngine.Rendering.BlendMode.DstColor && dstBlend == UnityEngine.Rendering.BlendMode.Zero && blendOp == UnityEngine.Rendering.BlendOp.Add) mat.SetFloat("_Mode", 5.0f);
+                    else if (blendOp == UnityEngine.Rendering.BlendOp.ReverseSubtract) mat.SetFloat("_Mode", 6.0f);
+                    else mat.SetFloat("_Mode", 7.0f);
                 }
             }
-
             return mat;
         }
 
-        private static Texture2D FindAndLoadTexture(
-            string texFileName,
-            MaterialSearch searchMode,
-            string modelFolder,
-            string searchDir,
-            UnityEditor.AssetImporters.AssetImportContext ctx)
+        private static HashSet<string> BuildCandidateFolders(string modelFolder, string searchDir, MaterialSearch searchMode)
+        {
+            HashSet<string> folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void AddFolderWithSubs(string root)
+            {
+                if (string.IsNullOrEmpty(root)) return;
+                string n = root.Replace('\\', '/');
+                folders.Add(n);
+                folders.Add($"{n}/Textures");
+                folders.Add($"{n}/textures");
+                folders.Add($"{n}/Materials");
+                folders.Add($"{n}/materials");
+
+                if ((searchMode == MaterialSearch.RecursiveSubFolder || searchMode == MaterialSearch.ProjectDir) && Directory.Exists(n))
+                {
+                    try { foreach (string sub in Directory.GetDirectories(n, "*", SearchOption.AllDirectories)) folders.Add(sub.Replace('\\', '/')); }
+                    catch { }
+                }
+            }
+
+            AddFolderWithSubs(modelFolder);
+            if (!string.IsNullOrEmpty(searchDir) && searchDir.StartsWith("Assets")) AddFolderWithSubs(searchDir);
+            return folders;
+        }
+
+        private static Texture2D FindAndLoadTexture(string texFileName, MaterialSearch searchMode, string modelFolder, string searchDir, UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             string cleanName = StripTextureExtensions(texFileName);
             if (string.IsNullOrEmpty(cleanName)) return null;
 
-            HashSet<string> candidateFolders = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
-
-            if (!string.IsNullOrEmpty(modelFolder))
-            {
-                string normModelFolder = modelFolder.Replace('\\', '/');
-                candidateFolders.Add(normModelFolder);
-                candidateFolders.Add($"{normModelFolder}/Textures");
-                candidateFolders.Add($"{normModelFolder}/textures");
-                candidateFolders.Add($"{normModelFolder}/Materials");
-                candidateFolders.Add($"{normModelFolder}/materials");
-
-                if (searchMode == MaterialSearch.RecursiveSubFolder || searchMode == MaterialSearch.ProjectDir)
-                {
-                    if (Directory.Exists(normModelFolder))
-                    {
-                        try
-                        {
-                            string[] subDirs = Directory.GetDirectories(normModelFolder, "*", SearchOption.AllDirectories);
-                            foreach (string subDir in subDirs)
-                            {
-                                candidateFolders.Add(subDir.Replace('\\', '/'));
-                            }
-                        }
-                        catch (System.Exception) { }
-                    }
-                }
-            }
-
-            if (!string.IsNullOrEmpty(searchDir) && searchDir.StartsWith("Assets"))
-            {
-                string normSearchDir = searchDir.Replace('\\', '/');
-                candidateFolders.Add(normSearchDir);
-                candidateFolders.Add($"{normSearchDir}/Textures");
-                candidateFolders.Add($"{normSearchDir}/textures");
-
-                if (searchMode == MaterialSearch.RecursiveSubFolder || searchMode == MaterialSearch.ProjectDir)
-                {
-                    if (Directory.Exists(normSearchDir))
-                    {
-                        try
-                        {
-                            string[] subDirs = Directory.GetDirectories(normSearchDir, "*", SearchOption.AllDirectories);
-                            foreach (string subDir in subDirs)
-                            {
-                                candidateFolders.Add(subDir.Replace('\\', '/'));
-                            }
-                        }
-                        catch (System.Exception) { }
-                    }
-                }
-            }
-
-            foreach (string folder in candidateFolders)
+            foreach (string folder in BuildCandidateFolders(modelFolder, searchDir, searchMode))
             {
                 foreach (string ext in TextureExtensions)
                 {
-                    string candidatePath = $"{folder}/{cleanName}{ext}";
-                    if (File.Exists(candidatePath))
-                    {
-                        Texture2D loadedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(candidatePath);
-                        if (loadedTex != null)
-                        {
-                            return loadedTex;
-                        }
-                    }
+                    string p = $"{folder}/{cleanName}{ext}";
+                    if (File.Exists(p)) { var t = AssetDatabase.LoadAssetAtPath<Texture2D>(p); if (t != null) return t; }
                 }
-
-                string directPath = $"{folder}/{Path.GetFileName(texFileName)}";
-                if (File.Exists(directPath))
-                {
-                    Texture2D loadedTex = AssetDatabase.LoadAssetAtPath<Texture2D>(directPath);
-                    if (loadedTex != null)
-                    {
-                        return loadedTex;
-                    }
-                }
+                string dp = $"{folder}/{Path.GetFileName(texFileName)}";
+                if (File.Exists(dp)) { var t = AssetDatabase.LoadAssetAtPath<Texture2D>(dp); if (t != null) return t; }
             }
 
-            string[] guids = AssetDatabase.FindAssets($"t:Texture2D {cleanName}");
-            foreach (string guid in guids)
+            foreach (string guid in AssetDatabase.FindAssets($"t:Texture2D {cleanName}"))
             {
-                string foundPath = AssetDatabase.GUIDToAssetPath(guid);
-                string foundName = StripTextureExtensions(foundPath);
-                if (foundName.Equals(cleanName, System.StringComparison.OrdinalIgnoreCase))
+                string p = AssetDatabase.GUIDToAssetPath(guid);
+                if (StripTextureExtensions(p).Equals(cleanName, StringComparison.OrdinalIgnoreCase))
                 {
-                    Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(foundPath);
-                    if (tex != null)
-                    {
-                        return tex;
-                    }
+                    var t = AssetDatabase.LoadAssetAtPath<Texture2D>(p);
+                    if (t != null) return t;
                 }
             }
-
             return null;
         }
 
         private static string FindExistingMaterial(string matName, string modelFolder, MaterialSearch searchMode, string searchDir)
         {
-            if (!string.IsNullOrEmpty(searchDir))
-            {
-                string searchDirPath = searchDir.Replace('\\', '/');
-                string directPath = $"{searchDirPath}/{matName}.mat";
-                if (File.Exists(directPath)) return directPath;
-            }
+            if (!string.IsNullOrEmpty(searchDir) && File.Exists($"{searchDir.Replace('\\', '/')}/{matName}.mat")) return $"{searchDir.Replace('\\', '/')}/{matName}.mat";
+            if (File.Exists($"{modelFolder}/{matName}.mat")) return $"{modelFolder}/{matName}.mat";
+            if (File.Exists($"{modelFolder}/Materials/{matName}.mat")) return $"{modelFolder}/Materials/{matName}.mat";
 
-            string localPath = $"{modelFolder}/{matName}.mat";
-            if (File.Exists(localPath)) return localPath;
-
-            string subFolderPath = $"{modelFolder}/Materials/{matName}.mat";
-            if (File.Exists(subFolderPath)) return subFolderPath;
-
-            string[] guids = AssetDatabase.FindAssets($"t:Material {matName}");
-            foreach (string guid in guids)
+            foreach (string guid in AssetDatabase.FindAssets($"t:Material {matName}"))
             {
                 string p = AssetDatabase.GUIDToAssetPath(guid);
-                if (Path.GetFileNameWithoutExtension(p).Equals(matName, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    return p;
-                }
+                if (Path.GetFileNameWithoutExtension(p).Equals(matName, StringComparison.OrdinalIgnoreCase)) return p;
             }
-
             return null;
         }
 
-        private static string ResolveTargetFolder(string modelFolder, string searchDir)
-        {
-            if (!string.IsNullOrEmpty(searchDir) && searchDir.StartsWith("Assets"))
-            {
-                return searchDir.Replace('\\', '/');
-            }
-            return $"{modelFolder}/Materials";
-        }
+        private static string ResolveTargetFolder(string modelFolder, string searchDir) =>
+            (!string.IsNullOrEmpty(searchDir) && searchDir.StartsWith("Assets")) ? searchDir.Replace('\\', '/') : $"{modelFolder}/Materials";
 
         public static void ExtractMaterials(string assetPath, SerializedProperty locationProp, SerializedProperty searchDirProp)
         {
-            string destinationFolder = EditorUtility.OpenFolderPanel("Select Destination Folder for Extracted Materials", "Assets", "");
-            if (string.IsNullOrEmpty(destinationFolder)) return;
+            string dest = EditorUtility.OpenFolderPanel("Select Destination Folder for Extracted Materials", "Assets", "");
+            if (string.IsNullOrEmpty(dest) || !dest.StartsWith(Application.dataPath)) return;
 
-            if (!destinationFolder.StartsWith(Application.dataPath))
-            {
-                EditorUtility.DisplayDialog("Invalid Folder", "Please select a destination folder inside the project's Assets directory.", "OK");
-                return;
-            }
-
-            string relativeFolder = "Assets" + destinationFolder.Substring(Application.dataPath.Length);
-
-            UnityEngine.Object[] subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+            string rel = "Assets" + dest.Substring(Application.dataPath.Length);
             int count = 0;
-
-            foreach (UnityEngine.Object subAsset in subAssets)
+            foreach (var sub in AssetDatabase.LoadAllAssetsAtPath(assetPath))
             {
-                if (subAsset is Material mat)
+                if (sub is Material mat)
                 {
-                    string targetPath = $"{relativeFolder}/{mat.name}.mat";
-                    Material newMat = UnityEngine.Object.Instantiate(mat);
-                    AssetDatabase.CreateAsset(newMat, targetPath);
+                    AssetDatabase.CreateAsset(UnityEngine.Object.Instantiate(mat), $"{rel}/{mat.name}.mat");
                     count++;
                 }
             }
-
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-
             locationProp.enumValueIndex = (int)MaterialLocation.UseExternalMaterials;
-            searchDirProp.stringValue = relativeFolder;
-
-            EditorUtility.DisplayDialog("Material Extraction Complete", $"Successfully extracted {count} materials to:\n{relativeFolder}", "OK");
+            searchDirProp.stringValue = rel;
+            EditorUtility.DisplayDialog("Material Extraction Complete", $"Successfully extracted {count} materials to:\n{rel}", "OK");
         }
-        #endregion
     }
 }
