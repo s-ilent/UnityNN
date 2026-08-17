@@ -1,3 +1,4 @@
+// File: Marathon/Rel/Parsers/CollisionParser.cs
 using UnityEngine;
 using System;
 using System.Collections.Generic;
@@ -5,15 +6,18 @@ using Marathon.IO;
 
 namespace SilentTools
 {
+    /// <summary>
+    /// Parser for NXR/XNR collision geometry files.
+    /// Extracts vertices, bounding boxes, and 16-byte triangle face records with surface bitmasks.
+    /// </summary>
     public static class CollisionParser
     {
         public static CollisionMeshData Parse(BinaryReaderEx reader, uint fileSize, uint headerLoc)
         {
             CollisionMeshData data = new CollisionMeshData();
-
             if (fileSize < 20) return data;
 
-            // 1. Container detection: check for NXR\0 magic at 0x60 (XNR wrapper) or 0x00 (raw NXR)
+            // 1. Container detection: check for NXR\0 magic at 0x60 (XNR container) or 0x00 (raw NXR)
             uint payloadStart = 0;
             if (fileSize >= 0x64)
             {
@@ -31,6 +35,7 @@ namespace SilentTools
                 if (!(reader.ReadByte() == (byte)'N' && reader.ReadByte() == (byte)'X' && 
                       reader.ReadByte() == (byte)'R' && reader.ReadByte() == 0))
                 {
+                    // Fallback scan in first 0x100 bytes for NXR\0
                     long scanLimit = Math.Min((long)fileSize - 4, 0x100);
                     for (long s = 0; s <= scanLimit; s += 4)
                     {
@@ -48,17 +53,38 @@ namespace SilentTools
             uint n = fileSize - payloadStart;
             if (n < 20) return data;
 
-            // 2. Resolve NXR Descriptor at payload offset 0x08 (desc_off = descriptor_ptr - 4)
-            reader.JumpTo(payloadStart + 0x08);
-            uint rawPtr = reader.ReadUInt32();
-            uint descOff = rawPtr >= 4 ? rawPtr - 4 : 0;
+            // 2. Find 'qua\0' (0x00617571) anchor marker
+            long quaIdx = FindQuaMarkerOffset(reader, payloadStart, n);
+            if (quaIdx < 0) return data;
 
-            if (descOff == 0 || descOff + 20 > n)
+            // 3. Resolve descriptor pointer at payload offset 0x08
+            reader.JumpTo(payloadStart + 0x08);
+            int rawPtr = reader.ReadInt32();
+
+            // Try direct offset first; if out of bounds, rebase
+            uint descOff = 0;
+            if (rawPtr > 4 && (uint)(rawPtr - 4) <= n - 20)
             {
-                return data;
+                descOff = (uint)(rawPtr - 4);
+            }
+            else
+            {
+                // Rebase descriptor address
+                uint testBase = RelResolver.ComputeBaseAddress(reader, headerLoc, fileSize);
+                if (RelResolver.TryResolveOffset(rawPtr - 4, n, testBase, out uint resDesc))
+                {
+                    descOff = resDesc;
+                }
+                else
+                {
+                    // Fallback: descriptor is located immediately before vertex/qua data or at headerLoc
+                    descOff = (quaIdx >= 20) ? (uint)(quaIdx - 20) : 0x10;
+                }
             }
 
-            // 3. Read 5 x uint32 descriptor
+            if (descOff + 20 > n) return data;
+
+            // 4. Read 5 x uint32 descriptor
             reader.JumpTo(payloadStart + descOff);
             uint quaPtr = reader.ReadUInt32();
             uint vertexCount = reader.ReadUInt32();
@@ -66,22 +92,12 @@ namespace SilentTools
             uint faceCount = reader.ReadUInt32();
             uint facePtr = reader.ReadUInt32();
 
-            // 4. Find 'qua\0' (0x00617571) anchor marker
-            long quaIdx = FindQuaMarkerOffset(reader, payloadStart, n);
-            if (quaIdx < 0)
-            {
-                return data;
-            }
+            // 5. Rebase pointers using qua marker
+            uint baseAddr = (quaPtr >= (uint)quaIdx) ? quaPtr - (uint)quaIdx : 0;
+            uint vertexOff = (vertexPtr >= baseAddr && (vertexPtr - baseAddr) < n) ? vertexPtr - baseAddr : (uint)(quaIdx + 8);
+            uint faceOff = (facePtr >= baseAddr && (facePtr - baseAddr) < n) ? facePtr - baseAddr : (vertexOff + vertexCount * 12);
 
-            // 5. Rebase pointers
-            uint baseAddr = quaPtr - (uint)quaIdx;
-            uint vertexOff = vertexPtr - baseAddr;
-            uint faceOff = facePtr - baseAddr;
-
-            if (vertexOff >= faceOff || faceOff > n)
-            {
-                return data;
-            }
+            if (vertexOff >= faceOff || faceOff > n) return data;
 
             // 6. Read Bounding Box extents if present
             if (descOff + 48 <= n)

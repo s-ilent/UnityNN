@@ -1,3 +1,4 @@
+// File: Marathon/Rel/Parsers/QuestListParser.cs
 using System.Collections.Generic;
 using Marathon.IO;
 
@@ -8,28 +9,44 @@ namespace SilentTools
         public static List<QuestListingData> Parse(BinaryReaderEx reader, uint baseAddr)
         {
             List<QuestListingData> list = new List<QuestListingData>();
-            uint listLoc = (uint)(reader.ReadInt32() - baseAddr);
+            uint fileSize = (uint)reader.BaseStream.Length;
+            if (fileSize < 8) return list;
+
+            int rawListLoc = reader.ReadInt32();
             uint listCountVal = reader.ReadUInt32();
 
-            int listCount = (int)listCountVal;
-            uint rebasedListEnd = (uint)(listCountVal - baseAddr);
+            if (!RelResolver.TryResolveOffset(rawListLoc, fileSize, baseAddr, out uint listLoc))
+                return list;
 
-            // If the value acts as a rebased list-end address, calculate actual count
-            if (rebasedListEnd > listLoc && (rebasedListEnd - listLoc) <= 0x5000)
+            int listCount = (int)listCountVal;
+            if (baseAddr != 0 && listCountVal >= baseAddr)
             {
-                listCount = (int)((rebasedListEnd - listLoc) / 8);
+                uint rebasedEnd = listCountVal - baseAddr;
+                if (rebasedEnd > listLoc && (rebasedEnd - listLoc) <= 0x5000)
+                {
+                    listCount = (int)((rebasedEnd - listLoc) / 8);
+                }
             }
+
+            if (listCount <= 0 || listCount > 1000 || listLoc + listCount * 8 > fileSize)
+                return list;
 
             for (int i = 0; i < listCount; i++)
             {
+                if (listLoc + i * 8 + 8 > fileSize) break;
+
                 reader.JumpTo(listLoc + i * 8);
-                QuestListingData q = new QuestListingData();
-                q.QuestNumber = reader.ReadInt32();
-                uint strLoc = (uint)(reader.ReadInt32() - baseAddr);
-                reader.JumpTo(strLoc);
-                q.FileName = reader.ReadNullTerminatedString();
-                list.Add(q);
+                int qNum = reader.ReadInt32();
+                int strRawPtr = reader.ReadInt32();
+
+                if (RelResolver.TryResolveOffset(strRawPtr, fileSize, baseAddr, out uint strLoc) && strLoc < fileSize)
+                {
+                    reader.JumpTo(strLoc);
+                    string fileName = reader.ReadNullTerminatedString();
+                    list.Add(new QuestListingData { QuestNumber = qNum, FileName = fileName });
+                }
             }
+
             return list;
         }
     }
