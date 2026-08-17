@@ -1,18 +1,10 @@
 using UnityEngine;
+using System;
 using System.Collections.Generic;
 using Marathon.IO;
 
 namespace SilentTools
 {
-    public class CollisionSurfaceComponent : MonoBehaviour
-    {
-        [Tooltip("Surface Material / Feature summary from collision file.")]
-        public int vertexCount;
-        public int triangleCount;
-        public Vector3 boundingBoxMin;
-        public Vector3 boundingBoxMax;
-    }
-
     public static class CollisionParser
     {
         public static CollisionMeshData Parse(BinaryReaderEx reader, uint fileSize, uint headerLoc)
@@ -39,8 +31,7 @@ namespace SilentTools
                 if (!(reader.ReadByte() == (byte)'N' && reader.ReadByte() == (byte)'X' && 
                       reader.ReadByte() == (byte)'R' && reader.ReadByte() == 0))
                 {
-                    // Fallback scan in first 0x100 bytes for NXR\0
-                    long scanLimit = System.Math.Min((long)fileSize - 4, 0x100);
+                    long scanLimit = Math.Min((long)fileSize - 4, 0x100);
                     for (long s = 0; s <= scanLimit; s += 4)
                     {
                         reader.JumpTo(s);
@@ -182,8 +173,18 @@ namespace SilentTools
             return -1;
         }
 
-        public static Mesh CreateUnityMesh(CollisionMeshData colData, float scale, string name)
+        public static Mesh CreateUnityMesh(
+            CollisionMeshData colData,
+            float scale,
+            string name,
+            out Material[] outMaterials,
+            out ushort[] outSubMeshMaterialIDs,
+            out ushort[] outTriangleMaterialIDs)
         {
+            outMaterials = new Material[0];
+            outSubMeshMaterialIDs = new ushort[0];
+            outTriangleMaterialIDs = new ushort[0];
+
             if (colData == null || colData.Vertices == null || colData.Vertices.Count == 0 ||
                 colData.Triangles == null || colData.Triangles.Count == 0)
             {
@@ -200,15 +201,30 @@ namespace SilentTools
                 positions[i] = pos;
             }
 
-            List<int> triangles = new List<int>(colData.Triangles.Count * 3);
+            // Group triangles by MaterialID (surface bitmask flags) into distinct submeshes
+            Dictionary<ushort, List<int>> materialTriangles = new Dictionary<ushort, List<int>>();
+            Dictionary<ushort, List<ushort>> materialTriMatIds = new Dictionary<ushort, List<ushort>>();
+
             for (int i = 0; i < colData.Triangles.Count; i++)
             {
                 var tri = colData.Triangles[i];
-                // Invert triangle winding (v0, v2, v1) for left-handed Unity coordinate conversion (x = -x)
-                triangles.Add(tri.VertexIndex0);
-                triangles.Add(tri.VertexIndex2);
-                triangles.Add(tri.VertexIndex1);
+                ushort matId = tri.MaterialID;
+
+                if (!materialTriangles.ContainsKey(matId))
+                {
+                    materialTriangles[matId] = new List<int>();
+                    materialTriMatIds[matId] = new List<ushort>();
+                }
+
+                // Invert winding (v0, v2, v1) for left-handed Unity coordinate conversion (x = -x)
+                materialTriangles[matId].Add(tri.VertexIndex0);
+                materialTriangles[matId].Add(tri.VertexIndex2);
+                materialTriangles[matId].Add(tri.VertexIndex1);
+                materialTriMatIds[matId].Add(matId);
             }
+
+            List<ushort> sortedMatKeys = new List<ushort>(materialTriangles.Keys);
+            sortedMatKeys.Sort();
 
             Mesh mesh = new Mesh { name = name };
             if (positions.Length > 65535)
@@ -217,27 +233,110 @@ namespace SilentTools
             }
 
             mesh.vertices = positions;
-            mesh.triangles = triangles.ToArray();
+            mesh.subMeshCount = sortedMatKeys.Count;
+
+            Material[] materials = new Material[sortedMatKeys.Count];
+            ushort[] subMeshMatIds = new ushort[sortedMatKeys.Count];
+            List<ushort> flattenedTriMatIds = new List<ushort>(colData.Triangles.Count);
+
+            Shader debugShader = Shader.Find("Standard") ?? Shader.Find("Diffuse");
+
+            for (int s = 0; s < sortedMatKeys.Count; s++)
+            {
+                ushort mKey = sortedMatKeys[s];
+                mesh.SetTriangles(materialTriangles[mKey], s);
+                subMeshMatIds[s] = mKey;
+                flattenedTriMatIds.AddRange(materialTriMatIds[mKey]);
+
+                CollisionSurfaceFlags flagEnum = (CollisionSurfaceFlags)mKey;
+                string flagName = flagEnum == CollisionSurfaceFlags.Default ? "Default" : flagEnum.ToString().Replace(", ", "_");
+
+                Material mat = new Material(debugShader) { name = $"CollisionSurface_{flagName}_0x{mKey:X4}" };
+                mat.color = GetMaterialPaletteColor(mKey);
+                materials[s] = mat;
+            }
+
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
+
+            outMaterials = materials;
+            outSubMeshMaterialIDs = subMeshMatIds;
+            outTriangleMaterialIDs = flattenedTriMatIds.ToArray();
 
             return mesh;
         }
 
-        public static Mesh CreateUnityMeshAndColliders(CollisionMeshData colData, float scale, string name, GameObject parentGO)
+        public static Mesh CreateUnityMeshAndColliders(
+            CollisionMeshData colData,
+            float scale,
+            string name,
+            GameObject parentGO,
+            UnityEditor.AssetImporters.AssetImportContext ctx = null)
         {
-            Mesh mesh = CreateUnityMesh(colData, scale, name);
+            Mesh mesh = CreateUnityMesh(
+                colData,
+                scale,
+                name,
+                out Material[] materials,
+                out ushort[] subMeshMatIDs,
+                out ushort[] triMatIDs
+            );
 
             if (mesh != null && parentGO != null)
             {
+                if (ctx != null)
+                {
+                    ctx.AddObjectToAsset("CollisionMesh", mesh);
+                    for (int m = 0; m < materials.Length; m++)
+                    {
+                        if (materials[m] != null)
+                        {
+                            ctx.AddObjectToAsset($"ColliMat_{subMeshMatIDs[m]}", materials[m]);
+                        }
+                    }
+                }
+
+                MeshFilter mf = parentGO.AddComponent<MeshFilter>();
+                mf.sharedMesh = mesh;
+
+                MeshRenderer mr = parentGO.AddComponent<MeshRenderer>();
+                mr.sharedMaterials = materials;
+
+                MeshCollider mc = parentGO.AddComponent<MeshCollider>();
+                mc.sharedMesh = mesh;
+
                 CollisionSurfaceComponent surfComp = parentGO.AddComponent<CollisionSurfaceComponent>();
                 surfComp.vertexCount = colData.Vertices.Count;
                 surfComp.triangleCount = colData.Triangles.Count;
+                surfComp.subMeshMaterialIDs = subMeshMatIDs;
+                surfComp.triangleMaterialIDs = triMatIDs;
                 if (colData.BoundingBoxMin.HasValue) surfComp.boundingBoxMin = colData.BoundingBoxMin.Value * scale;
                 if (colData.BoundingBoxMax.HasValue) surfComp.boundingBoxMax = colData.BoundingBoxMax.Value * scale;
             }
 
             return mesh;
+        }
+
+        private static Color GetMaterialPaletteColor(ushort materialId)
+        {
+            if (materialId == 0) return new Color(0.7f, 0.7f, 0.7f, 0.75f); // Grey (Wall/Dirt/Concrete/Hole)
+
+            if ((materialId & (ushort)CollisionSurfaceFlags.Grass) != 0)
+                return new Color(0.2f, 0.8f, 0.2f, 0.75f); // Green (草)
+
+            if ((materialId & (ushort)CollisionSurfaceFlags.Water) != 0)
+                return new Color(0.2f, 0.5f, 0.95f, 0.75f); // Blue (水)
+
+            if ((materialId & (ushort)CollisionSurfaceFlags.Sand) != 0)
+                return new Color(0.95f, 0.85f, 0.3f, 0.75f); // Sand Yellow (砂)
+
+            if ((materialId & (ushort)CollisionSurfaceFlags.Footprint) != 0)
+                return new Color(0.95f, 0.55f, 0.15f, 0.75f); // Footprint Orange (足跡)
+
+            if ((materialId & (ushort)CollisionSurfaceFlags.Metal) != 0)
+                return new Color(0.2f, 0.85f, 0.85f, 0.75f); // Metal Cyan (鉄)
+
+            return Color.HSVToRGB(((materialId * 53) % 360) / 360f, 0.65f, 0.85f);
         }
     }
 }
