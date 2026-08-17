@@ -305,7 +305,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     float3 L = normalize(UnityWorldSpaceLightDir(shading.position));
     float NdotL = max(0.0, dot(shading.normal, L));
     
-    half3 diffuse = UNITY_PI * _LightColor0.rgb;
+    half3 baseBrightness = UNITY_PI * _LightColor0.rgb;
     // Todo: Apply lighting to meshes with normals, but only apply color to meshes without.
     // * NdotL * shading.attenuation;
     // We don't have a good way of telling if a mesh had normals before importing though... 
@@ -314,7 +314,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     // I wonder if we could use the diffuse and ambient colour here. Problem is, the ambient colour and 
     // diffuse colour are always the same in the meshes I've looked at. 
     // The best choice is probably to fake it. 
-    diffuse = diffuse * lerp(0.5, 1.0, min(NdotL, shading.attenuation));
+    half3 diffuse = baseBrightness * lerp(0.5, 1.0, min(NdotL, shading.attenuation));
 
     half3 specular = half3(0, 0, 0);
     if (material.smoothness > 0.0)
@@ -340,8 +340,8 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
         {
             return half4(0, 0, 0, material.baseColor.a);
         }
-        half3 finalRGB = 16.0 * material.baseColor.rgb + material.emissive;
-        // applyUnityFog(finalRGB, fogDepth);
+        half3 finalRGB = baseBrightness * material.baseColor.rgb + material.emissive;
+        if (!noFog) applyUnityFog(finalRGB, fogDepth);
         return half4(finalRGB, material.baseColor.a);
         
         diffuse = 1.0;
@@ -351,7 +351,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     if (isForwardAdd)
     {
         finalColor = material.baseColor.rgb * diffuse + specular;
-        if (!isUnlit) applyUnityFog(finalColor, fogDepth);
+        if (!noFog) applyUnityFog(finalColor, fogDepth);
         return half4(finalColor, material.baseColor.a);
     };
     
