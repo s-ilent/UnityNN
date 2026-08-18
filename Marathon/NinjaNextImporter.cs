@@ -23,7 +23,23 @@ namespace SilentTools
         IndividualSubObjects = 2
     }
 
-    [ScriptedImporter(1, new[] {
+    [Serializable]
+    public class MaterialRemapEntry
+    {
+        public int slotIndex;
+        public string originalName = "";
+        public Material overrideMaterial;
+    }
+
+    [Serializable]
+    public class TextureRemapEntry
+    {
+        public int textureIndex;
+        public string originalFileName = "";
+        public Texture2D overrideTexture;
+    }
+
+    [ScriptedImporter(2, new[] {
         // Xbox / PC formats
         "xno", "xna", "xnj", "xnm", "xnv", "xnt", "xnn", "xnc", "xnl", "xnd", "xng", "xne", "xni", "xnf", "xnr", "rel", "nbl",
         // GameCube / Wii formats
@@ -43,6 +59,13 @@ namespace SilentTools
         public MaterialSearch m_MaterialSearch = MaterialSearch.RecursiveSubFolder;
         public MaterialNaming m_MaterialNaming = MaterialNaming.ByMaterialName;
         public string m_MaterialSearchPath = "Assets/Materials";
+        public List<MaterialRemapEntry> m_MaterialRemaps = new List<MaterialRemapEntry>();
+
+        [Header("Texture Search Paths (Ordered by Priority)")]
+        public string[] m_TextureSearchPaths = Array.Empty<string>();
+
+        [Header("Texture Remap Settings (XNT)")]
+        public List<TextureRemapEntry> m_TextureRemaps = new List<TextureRemapEntry>();
 
         [Header("Animation Settings")]
         public bool m_ImportAnimation = true;
@@ -55,24 +78,12 @@ namespace SilentTools
             string assetName = Path.GetFileNameWithoutExtension(ctx.assetPath);
             Texture2D icon = NinjaIconResolver.GetIconForExtension(ext);
 
-            // -----------------------------------------------------------------
             // 1. REL / XNR Stage Layout & Environment Files (.rel, .xnr, .gnr, .znr)
-            // -----------------------------------------------------------------
-            if (ext == ".rel" || ext == ".xnr" || ext == ".gnr" || ext == ".znr")
+            if (ext is ".rel" or ".xnr" or ".gnr" or ".znr")
             {
-                byte[] rawData;
                 try
                 {
-                    rawData = File.ReadAllBytes(ctx.assetPath);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"Failed to read REL/XNR file {ctx.assetPath}:\n{ex}");
-                    return;
-                }
-
-                try
-                {
+                    byte[] rawData = File.ReadAllBytes(ctx.assetPath);
                     RelFileType relType;
                     object parsedRel = RelResolver.ParseRelBytes(rawData, Path.GetFileName(ctx.assetPath), out relType);
 
@@ -87,7 +98,7 @@ namespace SilentTools
                         }
                     }
 
-                    Debug.LogError($"Failed to parse REL/XNR file {ctx.assetPath}: File produced no valid layout, collision, or environment data.");
+                    Debug.LogError($"Failed to parse REL/XNR file {ctx.assetPath}: No valid layout or collision data generated.");
                     return;
                 }
                 catch (Exception ex)
@@ -97,13 +108,11 @@ namespace SilentTools
                 }
             }
 
-            // -----------------------------------------------------------------
-            // 2. Core Binary Loader (.xno, .xna, .xnj, .xnm, .xnt, .nbl, etc.)
-            // -----------------------------------------------------------------
+            // 2. Binary Loader (.xno, .xna, .xnj, .xnm, .xnt, .nbl, etc.)
             NinjaNext loader = new NinjaNext();
             try
             {
-                if (ext == ".nbl" || ext == ".gbl" || ext == ".zbl")
+                if (ext is ".nbl" or ".gbl" or ".zbl")
                 {
                     using (FileStream fs = File.OpenRead(ctx.assetPath))
                     {
@@ -122,11 +131,13 @@ namespace SilentTools
                 return;
             }
 
-            // -----------------------------------------------------------------
+            if (loader.Data == null) return;
+
+            // Apply texture overrides if an XNT TextureList exists
+            ApplyTextureOverrides(loader.Data.TextureList);
+
             // 3. Standalone Motion / Animation Assets (.xnm, .xnv, .gnm, .znm)
-            // -----------------------------------------------------------------
-            bool isStandaloneMotion = (ext == ".xnm" || ext == ".xnv" || ext == ".gnm" || ext == ".gnv" || ext == ".znm") 
-                                      && loader.Data.Object == null;
+            bool isStandaloneMotion = (ext is ".xnm" or ".xnv" or ".gnm" or ".gnv" or ".znm") && loader.Data.Object == null;
 
             if (isStandaloneMotion)
             {
@@ -147,9 +158,7 @@ namespace SilentTools
                 }
             }
 
-            // -----------------------------------------------------------------
             // 4. Model & Hierarchy Construction
-            // -----------------------------------------------------------------
             GameObject rootGO = null;
             List<Transform> nodeTransforms = new List<Transform>();
 
@@ -167,13 +176,13 @@ namespace SilentTools
                     m_MaterialSearch,
                     m_MaterialNaming,
                     m_MaterialSearchPath,
+                    m_TextureSearchPaths,
+                    m_MaterialRemaps,
                     out nodeTransforms
                 );
             }
 
-            // -----------------------------------------------------------------
             // 5. Camera / Light Objects (.xnc, .xnl, etc.)
-            // -----------------------------------------------------------------
             if (rootGO == null && loader.Data.Camera != null)
             {
                 rootGO = new GameObject(assetName);
@@ -186,9 +195,7 @@ namespace SilentTools
                 lightComp.type = UnityEngine.LightType.Directional;
             }
 
-            // -----------------------------------------------------------------
-            // 6. Animation Setup & Controller Resolution (Encapsulated)
-            // -----------------------------------------------------------------
+            // 6. Animation Setup & Controller Resolution
             if (rootGO != null)
             {
                 if (m_ImportAnimation)
@@ -211,19 +218,34 @@ namespace SilentTools
                 return;
             }
 
-            // -----------------------------------------------------------------
             // 7. Non-instantiable Support / Metadata Assets (.xnt, .xnn, etc.)
-            // -----------------------------------------------------------------
             TextAsset textAsset = CreateSummaryTextAsset(loader.Data, assetName, ext);
             ctx.AddObjectToAsset("main", textAsset, icon);
             ctx.SetMainObject(textAsset);
+        }
+
+        private void ApplyTextureOverrides(NinjaTextureList texList)
+        {
+            if (texList?.NinjaTextureFiles == null || m_TextureRemaps == null || m_TextureRemaps.Count == 0) return;
+
+            foreach (var remap in m_TextureRemaps)
+            {
+                if (remap.overrideTexture != null && remap.textureIndex >= 0 && remap.textureIndex < texList.NinjaTextureFiles.Count)
+                {
+                    string overridePath = AssetDatabase.GetAssetPath(remap.overrideTexture);
+                    if (!string.IsNullOrEmpty(overridePath))
+                    {
+                        texList.NinjaTextureFiles[remap.textureIndex].FileName = Path.GetFileName(overridePath);
+                    }
+                }
+            }
         }
 
         private static TextAsset CreateSummaryTextAsset(NinjaNext.FormatData data, string assetName, string extension)
         {
             StringBuilder sb = new StringBuilder();
 
-            if (data.TextureList?.NinjaTextureFiles != null)
+            if (data?.TextureList?.NinjaTextureFiles != null)
             {
                 sb.AppendLine($"Ninja Texture List ({assetName}{extension})");
                 sb.AppendLine($"Textures ({data.TextureList.NinjaTextureFiles.Count}):");
@@ -233,7 +255,7 @@ namespace SilentTools
                     sb.AppendLine($"  [{i:00}] {tf.FileName} (GlobalIndex: {tf.GlobalIndex}, Bank: {tf.Bank})");
                 }
             }
-            else if (data.NodeNameList?.NinjaNodeNames != null)
+            else if (data?.NodeNameList?.NinjaNodeNames != null)
             {
                 sb.AppendLine($"Ninja Node Name List ({assetName}{extension})");
                 sb.AppendLine($"Names ({data.NodeNameList.NinjaNodeNames.Count}):");
@@ -242,7 +264,7 @@ namespace SilentTools
                     sb.AppendLine($"  [{i:0000}] {data.NodeNameList.NinjaNodeNames[i]}");
                 }
             }
-            else if (data.EffectList != null)
+            else if (data?.EffectList != null)
             {
                 sb.AppendLine($"Ninja Effect List ({assetName}{extension})");
                 sb.AppendLine($"Effects ({data.EffectList.NinjaEffectFiles?.Count ?? 0}):");

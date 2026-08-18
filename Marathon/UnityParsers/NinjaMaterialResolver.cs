@@ -31,13 +31,11 @@ namespace SilentTools
     public static class NinjaMaterialResolver
     {
         private static readonly string[] TextureExtensions = {
-            ".png", ".PNG", ".tga", ".TGA", ".dds", ".DDS", ".psd", ".PSD",
-            ".jpg", ".JPG", ".jpeg", ".JPEG", ".bmp", ".BMP", ".tif", ".TIF",
-            ".tiff", ".TIFF", ".xvr", ".XVR"
+            ".png", ".dds", ".tga", ".xvr", ".jpg", ".jpeg", ".bmp", ".psd", ".tif", ".tiff"
         };
 
         private static readonly string[] TextureListExtensions = {
-            ".xnt", ".XNT", ".gnt", ".GNT", ".znt", ".ZNT", ".cnt", ".CNT", ".ent", ".ENT", ".int", ".INT"
+            ".xnt", ".gnt", ".znt", ".cnt", ".ent", ".int"
         };
 
         /// <summary>
@@ -61,9 +59,13 @@ namespace SilentTools
         }
 
         /// <summary>
-        /// Auto-resolves associated external texture list files (.xnt, .gnt, .znt) if the embedded texture list is missing.
+        /// Auto-resolves associated external texture list files (.xnt, .gnt, .znt) from search paths or adjacent directories.
         /// </summary>
-        public static NinjaTextureList ResolveTextureList(NinjaTextureList embeddedTexList, string assetPath, UnityEditor.AssetImporters.AssetImportContext ctx = null)
+        public static NinjaTextureList ResolveTextureList(
+            NinjaTextureList embeddedTexList,
+            string assetPath,
+            UnityEditor.AssetImporters.AssetImportContext ctx = null,
+            string[] textureSearchPaths = null)
         {
             if (embeddedTexList?.NinjaTextureFiles != null && embeddedTexList.NinjaTextureFiles.Count > 0)
                 return embeddedTexList;
@@ -72,29 +74,46 @@ namespace SilentTools
             string baseDir = Path.GetDirectoryName(assetPath);
             string baseName = Path.GetFileNameWithoutExtension(assetPath);
 
-            foreach (string ext in TextureListExtensions)
+            List<string> candidateDirs = new List<string>();
+            if (textureSearchPaths != null)
             {
-                string candidate = Path.Combine(baseDir, baseName + ext).Replace('\\', '/');
-                if (File.Exists(candidate))
+                foreach (string dir in textureSearchPaths)
                 {
-                    try
-                    {
-                        NinjaNext loader = new NinjaNext();
-                        loader.Load(candidate);
-                        if (loader.Data.TextureList?.NinjaTextureFiles != null && loader.Data.TextureList.NinjaTextureFiles.Count > 0)
-                        {
-                            ctx?.DependsOnSourceAsset(candidate);
-                            return loader.Data.TextureList;
-                        }
-                    }
-                    catch { }
+                    if (!string.IsNullOrEmpty(dir)) candidateDirs.Add(dir);
                 }
             }
+            candidateDirs.Add(baseDir);
+
+            foreach (string dir in candidateDirs)
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) continue;
+
+                foreach (string ext in TextureListExtensions)
+                {
+                    string candidate = Path.Combine(dir, baseName + ext).Replace('\\', '/');
+                    if (File.Exists(candidate))
+                    {
+                        try
+                        {
+                            NinjaNext loader = new NinjaNext();
+                            loader.Load(candidate);
+                            if (loader.Data.TextureList?.NinjaTextureFiles != null && loader.Data.TextureList.NinjaTextureFiles.Count > 0)
+                            {
+                                ctx?.DependsOnSourceAsset(candidate);
+                                return loader.Data.TextureList;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+
             return embeddedTexList;
         }
 
         /// <summary>
         /// Resolves, searches, creates, or embeds materials for a Ninja Object asset.
+        /// Textures in specified search directories override local asset folder textures in priority order.
         /// </summary>
         public static List<Material> ResolveMaterials(
             NinjaObject objData,
@@ -104,12 +123,21 @@ namespace SilentTools
             MaterialLocation location,
             MaterialSearch searchMode,
             MaterialNaming namingMode,
-            string searchDirectory)
+            string searchDirectory,
+            string[] textureSearchPaths = null)
         {
             List<Material> materials = new List<Material>();
             Shader stdShader = Shader.Find("NinjaNext/Standard");
             string modelFolderPath = Path.GetDirectoryName(ctx.assetPath).Replace('\\', '/');
-            texList = ResolveTextureList(texList, ctx.assetPath, ctx);
+            texList = ResolveTextureList(texList, ctx.assetPath, ctx, textureSearchPaths);
+
+            // Build prioritized candidate folders (Custom texture paths evaluated in array order)
+            List<string> candidateFolders = BuildCandidateFolders(
+                modelFolderPath,
+                searchDirectory,
+                textureSearchPaths,
+                searchMode
+            );
 
             for (int i = 0; i < objData.Materials.Count; i++)
             {
@@ -119,11 +147,11 @@ namespace SilentTools
                 var texMap = objData.TextureMaps?.Find(t => t.Offset == nMat.MaterialTexMapDescriptionOffset);
 
                 string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, namingMode);
-                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, searchMode, modelFolderPath, searchDirectory, ctx);
+                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, searchMode, candidateFolders, ctx);
 
                 if (location == MaterialLocation.UseExternalMaterials)
                 {
-                    string foundPath = FindExistingMaterial(matName, modelFolderPath, searchMode, searchDirectory);
+                    string foundPath = FindExistingMaterial(matName, candidateFolders, searchMode);
                     if (!string.IsNullOrEmpty(foundPath))
                     {
                         Material externalMat = AssetDatabase.LoadAssetAtPath<Material>(foundPath);
@@ -213,7 +241,7 @@ namespace SilentTools
         private static Material CreateMaterialData(
             NinjaMaterial nMat, NinjaMaterialColours matColour, NinjaMaterialLogic matLogic,
             NinjaTextureMap texMap, NinjaTextureList texList, int index, string matName, Shader shader,
-            MaterialSearch searchMode, string modelFolder, string searchDir, UnityEditor.AssetImporters.AssetImportContext ctx)
+            MaterialSearch searchMode, List<string> candidateFolders, UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             Material mat = new Material(shader) { name = matName };
             uint rawFlags = nMat != null ? (uint)nMat.Flag : 0;
@@ -253,10 +281,10 @@ namespace SilentTools
                         string rawTex = texList.NinjaTextureFiles[desc.Index].FileName;
                         if (string.IsNullOrEmpty(rawTex)) continue;
 
-                        Texture2D tex = FindAndLoadTexture(rawTex, searchMode, modelFolder, searchDir, ctx);
+                        Texture2D tex = FindAndLoadTexture(rawTex, candidateFolders, searchMode, ctx);
                         if (tex == null) continue;
 
-                        string lower = rawTex.ToLower();
+                        string lower = rawTex.ToLowerInvariant();
                         if (((desc.Type & 0x2000) != 0) || lower.Contains("env") || lower.Contains("matcap") || lower.Contains("refl"))
                         {
                             mat.SetTexture("_MatcapTex", tex);
@@ -353,70 +381,138 @@ namespace SilentTools
             return mat;
         }
 
-        private static HashSet<string> BuildCandidateFolders(string modelFolder, string searchDir, MaterialSearch searchMode)
+        private static List<string> BuildCandidateFolders(
+            string modelFolder,
+            string materialSearchDir,
+            string[] textureSearchPaths,
+            MaterialSearch searchMode)
         {
-            HashSet<string> folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            void AddFolderWithSubs(string root)
-            {
-                if (string.IsNullOrEmpty(root)) return;
-                string n = root.Replace('\\', '/');
-                folders.Add(n);
-                folders.Add($"{n}/Textures");
-                folders.Add($"{n}/textures");
-                folders.Add($"{n}/Materials");
-                folders.Add($"{n}/materials");
+            List<string> folders = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                if ((searchMode == MaterialSearch.RecursiveSubFolder || searchMode == MaterialSearch.ProjectDir) && Directory.Exists(n))
+            void AddFolder(string dir)
+            {
+                if (string.IsNullOrEmpty(dir)) return;
+                string norm = dir.Replace('\\', '/').TrimEnd('/');
+                if (seen.Add(norm)) folders.Add(norm);
+            }
+
+            void AddFolderAndSubdirs(string dir)
+            {
+                if (string.IsNullOrEmpty(dir)) return;
+                string norm = dir.Replace('\\', '/').TrimEnd('/');
+                AddFolder(norm);
+                AddFolder($"{norm}/Textures");
+                AddFolder($"{norm}/textures");
+
+                if (searchMode == MaterialSearch.RecursiveSubFolder && Directory.Exists(norm))
                 {
-                    try { foreach (string sub in Directory.GetDirectories(n, "*", SearchOption.AllDirectories)) folders.Add(sub.Replace('\\', '/')); }
+                    try
+                    {
+                        foreach (string sub in Directory.GetDirectories(norm, "*", SearchOption.TopDirectoryOnly))
+                        {
+                            AddFolder(sub);
+                        }
+                    }
                     catch { }
                 }
             }
 
-            AddFolderWithSubs(modelFolder);
-            if (!string.IsNullOrEmpty(searchDir) && searchDir.StartsWith("Assets")) AddFolderWithSubs(searchDir);
+            // Priority 1: User-specified Texture Search Paths (Evaluated in list order)
+            if (textureSearchPaths != null)
+            {
+                foreach (string texDir in textureSearchPaths)
+                {
+                    AddFolderAndSubdirs(texDir);
+                }
+            }
+
+            // Priority 2: Local Model Folder and local Textures/
+            AddFolderAndSubdirs(modelFolder);
+            AddFolder($"{modelFolder}/Materials");
+            AddFolder($"{modelFolder}/materials");
+
+            // Priority 3: Material Search Path
+            AddFolderAndSubdirs(materialSearchDir);
+
             return folders;
         }
 
-        private static Texture2D FindAndLoadTexture(string texFileName, MaterialSearch searchMode, string modelFolder, string searchDir, UnityEditor.AssetImporters.AssetImportContext ctx)
+        private static Texture2D FindAndLoadTexture(
+            string texFileName,
+            List<string> candidateFolders,
+            MaterialSearch searchMode,
+            UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             string cleanName = StripTextureExtensions(texFileName);
             if (string.IsNullOrEmpty(cleanName)) return null;
 
-            foreach (string folder in BuildCandidateFolders(modelFolder, searchDir, searchMode))
+            // 1. Direct prioritized folder checks (Overrides evaluated in order)
+            foreach (string folder in candidateFolders)
             {
                 foreach (string ext in TextureExtensions)
                 {
                     string p = $"{folder}/{cleanName}{ext}";
-                    if (File.Exists(p)) { var t = AssetDatabase.LoadAssetAtPath<Texture2D>(p); if (t != null) return t; }
+                    if (File.Exists(p))
+                    {
+                        var t = AssetDatabase.LoadAssetAtPath<Texture2D>(p);
+                        if (t != null)
+                        {
+                            ctx?.DependsOnSourceAsset(p);
+                            return t;
+                        }
+                    }
                 }
-                string dp = $"{folder}/{Path.GetFileName(texFileName)}";
-                if (File.Exists(dp)) { var t = AssetDatabase.LoadAssetAtPath<Texture2D>(dp); if (t != null) return t; }
+                string exactPath = $"{folder}/{Path.GetFileName(texFileName)}";
+                if (File.Exists(exactPath))
+                {
+                    var t = AssetDatabase.LoadAssetAtPath<Texture2D>(exactPath);
+                    if (t != null)
+                    {
+                        ctx?.DependsOnSourceAsset(exactPath);
+                        return t;
+                    }
+                }
             }
 
-            foreach (string guid in AssetDatabase.FindAssets($"t:Texture2D {cleanName}"))
+            // 2. Global search ONLY if ProjectDir is explicitly selected
+            if (searchMode == MaterialSearch.ProjectDir)
             {
-                string p = AssetDatabase.GUIDToAssetPath(guid);
-                if (StripTextureExtensions(p).Equals(cleanName, StringComparison.OrdinalIgnoreCase))
+                foreach (string guid in AssetDatabase.FindAssets($"t:Texture2D {cleanName}"))
                 {
-                    var t = AssetDatabase.LoadAssetAtPath<Texture2D>(p);
-                    if (t != null) return t;
+                    string p = AssetDatabase.GUIDToAssetPath(guid);
+                    if (StripTextureExtensions(p).Equals(cleanName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var t = AssetDatabase.LoadAssetAtPath<Texture2D>(p);
+                        if (t != null)
+                        {
+                            ctx?.DependsOnSourceAsset(p);
+                            return t;
+                        }
+                    }
                 }
             }
+
             return null;
         }
 
-        private static string FindExistingMaterial(string matName, string modelFolder, MaterialSearch searchMode, string searchDir)
+        private static string FindExistingMaterial(string matName, List<string> candidateFolders, MaterialSearch searchMode)
         {
-            if (!string.IsNullOrEmpty(searchDir) && File.Exists($"{searchDir.Replace('\\', '/')}/{matName}.mat")) return $"{searchDir.Replace('\\', '/')}/{matName}.mat";
-            if (File.Exists($"{modelFolder}/{matName}.mat")) return $"{modelFolder}/{matName}.mat";
-            if (File.Exists($"{modelFolder}/Materials/{matName}.mat")) return $"{modelFolder}/Materials/{matName}.mat";
-
-            foreach (string guid in AssetDatabase.FindAssets($"t:Material {matName}"))
+            foreach (string folder in candidateFolders)
             {
-                string p = AssetDatabase.GUIDToAssetPath(guid);
-                if (Path.GetFileNameWithoutExtension(p).Equals(matName, StringComparison.OrdinalIgnoreCase)) return p;
+                string p = $"{folder}/{matName}.mat";
+                if (File.Exists(p)) return p;
             }
+
+            if (searchMode == MaterialSearch.ProjectDir)
+            {
+                foreach (string guid in AssetDatabase.FindAssets($"t:Material {matName}"))
+                {
+                    string p = AssetDatabase.GUIDToAssetPath(guid);
+                    if (Path.GetFileNameWithoutExtension(p).Equals(matName, StringComparison.OrdinalIgnoreCase)) return p;
+                }
+            }
+
             return null;
         }
 

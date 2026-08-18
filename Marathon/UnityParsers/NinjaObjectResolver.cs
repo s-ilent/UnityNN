@@ -9,9 +9,6 @@ namespace SilentTools
 {
     public static class NinjaObjectResolver
     {
-        /// <summary>
-        /// Resolves a NinjaObject into a Unity GameObject hierarchy with Meshes and Materials.
-        /// </summary>
         public static GameObject ResolveObject(
             NinjaObject objData,
             NinjaTextureList texList,
@@ -24,26 +21,28 @@ namespace SilentTools
             MaterialSearch materialSearch,
             MaterialNaming materialNaming,
             string materialSearchPath,
+            string[] textureSearchPaths,
+            List<MaterialRemapEntry> materialRemaps,
             out List<Transform> outNodeTransforms)
         {
             outNodeTransforms = new List<Transform>();
             if (objData == null) return null;
 
+            // Resolve bone/node name strings if present in linked .xnn files
             NinjaNodeNameResolver.ResolveNodeNames(objData, null, ctx?.assetPath, ctx, out _);
 
             GameObject rootGO = new GameObject(assetName);
 
-            // 1. Build Node Hierarchy
+            // 1. Build Full Node / Bone Hierarchy
             for (int i = 0; i < objData.Nodes.Count; i++)
             {
                 NinjaNode node = objData.Nodes[i];
                 string nodeName = !string.IsNullOrEmpty(node.Name) ? node.Name : $"Node_{i:0000}";
                 GameObject nodeGO = new GameObject(nodeName);
 
-                Vector3 pos = node.Translation;
-                pos = new Vector3(-pos.x * scale, pos.y * scale, pos.z * scale);
-
+                Vector3 pos = new Vector3(-node.Translation.x * scale, node.Translation.y * scale, node.Translation.z * scale);
                 Vector3 rot = node.Rotation;
+
                 if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
                 if (float.IsNaN(rot.y) || float.IsInfinity(rot.y)) rot.y = 0f;
                 if (float.IsNaN(rot.z) || float.IsInfinity(rot.z)) rot.z = 0f;
@@ -60,10 +59,31 @@ namespace SilentTools
                 outNodeTransforms.Add(nodeGO.transform);
             }
 
-            // 2. Resolve Materials
+            // 2. Resolve Materials (Passing prioritized texture search paths)
             List<Material> materials = importMaterials
-                ? NinjaMaterialResolver.ResolveMaterials(objData, texList, assetName, ctx, materialLocation, materialSearch, materialNaming, materialSearchPath)
+                ? NinjaMaterialResolver.ResolveMaterials(
+                    objData,
+                    texList,
+                    assetName,
+                    ctx,
+                    materialLocation,
+                    materialSearch,
+                    materialNaming,
+                    materialSearchPath,
+                    textureSearchPaths)
                 : new List<Material>();
+
+            // Apply Per-Material User Overrides from Inspector Remap Table
+            if (materialRemaps != null)
+            {
+                foreach (var remap in materialRemaps)
+                {
+                    if (remap.overrideMaterial != null && remap.slotIndex >= 0 && remap.slotIndex < materials.Count)
+                    {
+                        materials[remap.slotIndex] = remap.overrideMaterial;
+                    }
+                }
+            }
 
             // 3. Dispatch to Mesh Import Mode
             switch (importMode)
@@ -110,7 +130,9 @@ namespace SilentTools
             Transform[] bones = allNodeTransforms.ToArray();
             Matrix4x4[] bindPoses = new Matrix4x4[bones.Length];
             for (int b = 0; b < bones.Length; b++)
+            {
                 bindPoses[b] = bones[b].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+            }
 
             mesh.bindposes = bindPoses;
             mesh.RecalculateBounds();
@@ -146,7 +168,9 @@ namespace SilentTools
                     {
                         if (ms.NodeIndex == n)
                         {
-                            if (!byMat.ContainsKey(ms.MaterialIndex)) byMat[ms.MaterialIndex] = new List<NinjaMeshSet>();
+                            if (!byMat.ContainsKey(ms.MaterialIndex))
+                                byMat[ms.MaterialIndex] = new List<NinjaMeshSet>();
+
                             byMat[ms.MaterialIndex].Add(ms);
                         }
                     }
@@ -160,7 +184,11 @@ namespace SilentTools
                     int matIdx = kvp.Key;
                     List<NinjaMeshSet> sets = kvp.Value;
                     GameObject targetGO = isSingle ? nodeTr.gameObject : new GameObject($"Mat_{matIdx:00}");
-                    if (!isSingle) targetGO.transform.SetParent(nodeTr, false);
+
+                    if (!isSingle)
+                    {
+                        targetGO.transform.SetParent(nodeTr, false);
+                    }
 
                     BuildNodeMeshSection(objData, rootGO, nodeTr, targetGO, sets, matIdx, n, materials, scale, assetName, ctx);
                 }
@@ -198,7 +226,10 @@ namespace SilentTools
 
             List<int> localPalette = new List<int>(boneSet);
             Dictionary<int, int> globalToLocal = new Dictionary<int, int>();
-            for (int b = 0; b < localPalette.Count; b++) globalToLocal[localPalette[b]] = b;
+            for (int b = 0; b < localPalette.Count; b++)
+            {
+                globalToLocal[localPalette[b]] = b;
+            }
 
             Matrix4x4? nodeXform = isSkinned ? (Matrix4x4?)null : nodeTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
             MeshBuffer buffer = new MeshBuffer();
@@ -392,7 +423,10 @@ namespace SilentTools
         private static Material[] MapMaterials(List<int> matKeys, List<Material> materials)
         {
             Material[] array = new Material[matKeys.Count];
-            for (int i = 0; i < matKeys.Count; i++) array[i] = GetMaterialOrStandard(matKeys[i], materials);
+            for (int i = 0; i < matKeys.Count; i++)
+            {
+                array[i] = GetMaterialOrStandard(matKeys[i], materials);
+            }
             return array;
         }
 
