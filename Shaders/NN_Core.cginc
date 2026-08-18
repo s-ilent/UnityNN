@@ -306,6 +306,8 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     material.smoothness = _Shininess;
     half4 specTex = tex2D(_SpecGlossMap, i.uv0.xy);
     material.specularColor = _SpecColor.rgb * specTex.rgb;
+    // Todo: Switch based on whether _SpecGlossMap exists. For PSU using the main tex looks more correct. 
+    material.specularColor *= material.baseColor;
 
     // 6. Emission
     float maxEmisColor = max(_EmissionColor.r, max(_EmissionColor.g, _EmissionColor.b));
