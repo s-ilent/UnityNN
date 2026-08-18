@@ -7,24 +7,124 @@ using Marathon.IO;
 
 namespace SilentTools
 {
-    /// <summary>
-    /// Core resolver and dispatcher for Phantasy Star Universe REL/XNR stage layout, environment,
-    /// collision, and parameter binary files.
-    /// </summary>
+    public class RelFormatDescriptor
+    {
+        public RelFileType FileType;
+        public string[] FilenameKeywords;
+        public Func<BinaryReaderEx, uint, uint, uint, object> Parser;
+        public Func<object, bool> HasContent;
+        public Action<object, GameObject, float, string, UnityEditor.AssetImporters.AssetImportContext> BuildHierarchy;
+    }
+
     public static class RelResolver
     {
+        public static readonly List<RelFormatDescriptor> RelFormats = new()
+        {
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.QuestList,
+                FilenameKeywords = new[] { "filelist.rel", "filelist.xnr", "questlist" },
+                Parser = (r, size, baseAddr, loc) => QuestListParser.Parse(r, baseAddr),
+                HasContent = data => data is List<QuestListingData> ql && ql.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildQuestListHierarchy((List<QuestListingData>)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.FileList,
+                FilenameKeywords = new[] { "scene_filelist", "obj_unit_filelist", "filelist" },
+                Parser = (r, size, baseAddr, loc) => FileListParser.Parse(r, baseAddr, loc),
+                HasContent = data => data is FileListData fl && fl.Categories != null && fl.Categories.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildFileListHierarchy((FileListData)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.Collision,
+                FilenameKeywords = new[] { "collision", "colli", "col.rel", "col.xnr", ".nxr" },
+                Parser = (r, size, baseAddr, loc) => CollisionParser.Parse(r, size, loc),
+                HasContent = data => data is CollisionMeshData col && col.Vertices != null && col.Vertices.Count > 0 && col.Triangles != null && col.Triangles.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => CollisionParser.CreateUnityMeshAndColliders((CollisionMeshData)data, scale, $"{root.name}_CollisionMesh", root, ctx)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.SetLayout,
+                FilenameKeywords = new[] { "set", "layout" },
+                Parser = (r, size, baseAddr, loc) => SetFileParser.Parse(r, size),
+                HasContent = data => data is SetFileData set && set.MapData != null && set.MapData.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildSetLayoutHierarchy((SetFileData)data, root, scale, path, ctx)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.ObjectParam,
+                FilenameKeywords = new[] { "obj_param", "npc_param", "object_param" },
+                Parser = (r, size, baseAddr, loc) => ObjectParamParser.Parse(r, size, baseAddr, loc),
+                HasContent = data => data is ObjectParamData op && op.ObjectDefinitions != null && op.ObjectDefinitions.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildObjectParamHierarchy((ObjectParamData)data, root, scale)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.ObjectParticleInfo,
+                FilenameKeywords = new[] { "obj_particle_info", "particle_info" },
+                Parser = (r, size, baseAddr, loc) => ObjectParticleInfoParser.Parse(r, size, baseAddr, loc),
+                HasContent = data => data is ObjectParticleInfoData part && part.Entries != null && part.Entries.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildObjectParticleInfoHierarchy((ObjectParticleInfoData)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.LndEffect,
+                FilenameKeywords = new[] { "effect", "env" },
+                Parser = (r, size, baseAddr, loc) => LndEffectParser.Parse(r, size),
+                HasContent = data => data is LndEffectData eff && (eff.Fog != null || eff.PlayerLight1 != null || eff.SunPosition != Vector3.zero),
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildLndEffectHierarchy((LndEffectData)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.LndEnemyLight,
+                FilenameKeywords = new[] { "enemylight", "enemy_light" },
+                Parser = (r, size, baseAddr, loc) => LndEnemyLightParser.Parse(r, size),
+                HasContent = data => data is LndEnemyLightData el && el.Light1 != null,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildLndEnemyLightHierarchy((LndEnemyLightData)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.FogBank,
+                FilenameKeywords = new[] { "fogbank", "fog_bank" },
+                Parser = (r, size, baseAddr, loc) => FogBankParser.Parse(r, baseAddr, loc),
+                HasContent = data => data is List<LndFogData> fogs && fogs.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildFogBankHierarchy((List<LndFogData>)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.LndCommon,
+                FilenameKeywords = new[] { "common" },
+                Parser = (r, size, baseAddr, loc) => LndCommonParser.Parse(r, baseAddr),
+                HasContent = data => data is LndCommonData com && (!string.IsNullOrEmpty(com.NblFilenameFragment) || com.UnknownFloat != 0f),
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildLndCommonHierarchy((LndCommonData)data, root)
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.StageRouteBlock,
+                FilenameKeywords = new[] { "block", "route" },
+                Parser = (r, size, baseAddr, loc) => StageBlockRouteParser.Parse(r, size, loc),
+                HasContent = data => data is StageBlockRouteData rd && rd.Offsets != null && rd.Offsets.Count > 0,
+                BuildHierarchy = null
+            },
+            new RelFormatDescriptor
+            {
+                FileType = RelFileType.EnemyLayout,
+                FilenameKeywords = new[] { "enemy", "spawn" },
+                Parser = (r, size, baseAddr, loc) => EnemyLayoutParser.Parse(r, baseAddr),
+                HasContent = data => data is EnemyLayoutData ed && ed.Spawns != null && ed.Spawns.Count > 0,
+                BuildHierarchy = (data, root, scale, path, ctx) => BuildEnemyLayoutHierarchy((EnemyLayoutData)data, root)
+            }
+        };
+
         #region Offset Resolution & Address Rebasing
-        /// <summary>
-        /// Attempts to resolve a raw memory or file pointer to a valid file-relative offset.
-        /// Handles base address rebasing when files contain dumped runtime memory pointers.
-        /// </summary>
         public static bool TryResolveOffset(int ptr, uint fileSize, uint baseAddr, out uint resolvedOffset)
         {
             resolvedOffset = 0;
             if (ptr <= 0) return false;
             uint uPtr = (uint)ptr;
 
-            // Rebase runtime memory address against computed base address
             if (baseAddr != 0 && uPtr >= baseAddr)
             {
                 uint rebased = uPtr - baseAddr;
@@ -35,7 +135,6 @@ namespace SilentTools
                 }
             }
 
-            // Direct file-relative offset within bounds
             if (uPtr < fileSize)
             {
                 resolvedOffset = uPtr;
@@ -45,9 +144,6 @@ namespace SilentTools
             return false;
         }
 
-        /// <summary>
-        /// Resolves a pointer to a file-relative offset, returning 0 if invalid or out of bounds.
-        /// </summary>
         public static uint ResolveOffset(int ptr, uint fileSize, uint baseAddr = 0)
         {
             if (TryResolveOffset(ptr, fileSize, baseAddr, out uint resolved))
@@ -59,76 +155,32 @@ namespace SilentTools
         #endregion
 
         #region Format Identification & Type Detection
-        /// <summary>
-        /// Identifies the specific REL/XNR file type from its filename or byte heuristics.
-        /// </summary>
         public static RelFileType IdentifyRelType(string filename, byte[] rawData)
         {
             string name = string.IsNullOrEmpty(filename) ? "" : filename.ToLowerInvariant();
 
-            // 1. Specific filename matches
-            if (name == "filelist.rel" || name == "filelist.xnr")
-                return RelFileType.QuestList;
-
-            if (name.Contains("scene_filelist") || name.Contains("obj_unit_filelist") || name.Contains("filelist"))
-                return RelFileType.FileList;
-
-            if (name.Contains("collision") || name.Contains("colli") || 
-                name.EndsWith("col.rel") || name.EndsWith("col.xnr") || name.EndsWith(".nxr"))
-                return RelFileType.Collision;
-
-            if (name.Contains("set") || name.Contains("layout"))
-                return RelFileType.SetLayout;
-
-            if (name.Contains("effect") || name.Contains("env"))
-                return RelFileType.LndEffect;
-
-            if (name.Contains("enemylight") || name.Contains("enemy_light"))
-                return RelFileType.LndEnemyLight;
-
-            if (name.Contains("fogbank") || name.Contains("fog_bank"))
-                return RelFileType.FogBank;
-
-            if (name.Contains("common"))
-                return RelFileType.LndCommon;
-
-            if (name.Contains("block") || name.Contains("route"))
-                return RelFileType.StageRouteBlock;
-
-            if (name.Contains("questlist"))
-                return RelFileType.QuestList;
-
-            if (name.StartsWith("obj_particle_info") || name.Contains("particle_info"))
-                return RelFileType.ObjectParticleInfo;
-
-            if (name.Contains("obj_param") || name.Contains("npc_param") || name.Contains("object_param"))
-                return RelFileType.ObjectParam;
-
-            if ((name.StartsWith("enemy") || name.Contains("param") || name.Contains("data") || 
-                 name.Contains("drop") || name.Contains("atk") || name.Contains("spawn")) &&
-                (name.EndsWith(".rel") || name.EndsWith(".xnr") || name.EndsWith(".gnr") || name.EndsWith(".znr")))
+            foreach (var desc in RelFormats)
             {
-                return RelFileType.EnemyLayout;
+                foreach (string kw in desc.FilenameKeywords)
+                {
+                    if (name.Contains(kw))
+                        return desc.FileType;
+                }
             }
 
             return DetectRelTypeFromData(rawData);
         }
 
-        /// <summary>
-        /// Probes raw binary bytes to infer the REL/XNR format type when the filename is ambiguous.
-        /// </summary>
         public static RelFileType DetectRelTypeFromData(byte[] rawData)
         {
             if (rawData == null || rawData.Length < 16) return RelFileType.Unknown;
 
-            // 1. Direct NXR Collision header checks
             if ((rawData[0] == 'N' && rawData[1] == 'X' && rawData[2] == 'R' && rawData[3] == 0) ||
                 (rawData.Length >= 0x64 && rawData[0x60] == 'N' && rawData[0x61] == 'X' && rawData[0x62] == 'R' && rawData[0x63] == 0))
             {
                 return RelFileType.Collision;
             }
 
-            // 2. Collision 'qua\0' anchor marker search
             for (int i = 0; i < rawData.Length - 4; i++)
             {
                 if (rawData[i] == 0x71 && rawData[i + 1] == 0x75 && rawData[i + 2] == 0x61 && rawData[i + 3] == 0)
@@ -149,7 +201,6 @@ namespace SilentTools
                 uint rawSize = reader.ReadUInt32();
                 uint headerLoc = reader.ReadUInt32();
 
-                // Detect Big-Endian files
                 if ((rawSize & 0xFF000000) != 0 || headerLoc > payload.Length)
                 {
                     reader.IsBigEndian = true;
@@ -160,132 +211,24 @@ namespace SilentTools
                 uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
                 if (headerLoc + 4 > fileSize) return RelFileType.Unknown;
 
-                reader.JumpTo(headerLoc);
-
-                // Check 1: 16-Category FileList (*filelist.rel)
-                int maxCategories = Math.Min(16, (int)((fileSize - headerLoc) / 4));
-                for (int i = 0; i < maxCategories; i++)
+                foreach (var desc in RelFormats)
                 {
-                    if (reader.BaseStream.Position + 4 > fileSize) break;
-                    int catPtr = reader.ReadInt32();
-
-                    if (catPtr > 0 && TryResolveOffset(catPtr, fileSize, baseAddr, out uint resCatPtr) && resCatPtr + 8 <= fileSize)
+                    try
                     {
-                        long savedPos = reader.BaseStream.Position;
-                        reader.JumpTo(resCatPtr);
-                        int listSize = reader.ReadInt32();
-                        int listAddr = reader.ReadInt32();
-                        reader.JumpTo(savedPos);
-
-                        if (listSize > 0 && listSize < 5000 && TryResolveOffset(listAddr, fileSize, baseAddr, out _))
+                        reader.JumpTo(headerLoc);
+                        object parsed = desc.Parser(reader, fileSize, baseAddr, headerLoc);
+                        if (parsed != null && desc.HasContent(parsed))
                         {
-                            return RelFileType.FileList;
+                            return desc.FileType;
                         }
                     }
-                }
-
-                // Check 2: ObjectParticleInfo
-                reader.JumpTo(headerLoc);
-                int partListPtr = reader.ReadInt32();
-                int partCount = reader.ReadInt32();
-                if (partCount > 0 && partCount < 1000 && TryResolveOffset(partListPtr, fileSize, baseAddr, out uint resPartPtr) && resPartPtr + 20 <= fileSize)
-                {
-                    reader.JumpTo(resPartPtr);
-                    int testIdx = reader.ReadInt32();
-                    int testNamePtr = reader.ReadInt32();
-                    int testFilePtr = reader.ReadInt32();
-                    if (testIdx >= 0 && testIdx < 5000 && 
-                        TryResolveOffset(testNamePtr, fileSize, baseAddr, out _) && 
-                        TryResolveOffset(testFilePtr, fileSize, baseAddr, out _))
-                    {
-                        return RelFileType.ObjectParticleInfo;
-                    }
-                }
-
-                // Check 3: ObjectParam
-                reader.JumpTo(headerLoc);
-                int objCount = reader.ReadInt32();
-                int tocPtr = reader.ReadInt32();
-                if (objCount > 0 && objCount < 1000 && TryResolveOffset(tocPtr, fileSize, baseAddr, out uint resTocPtr) && resTocPtr + 8 <= fileSize)
-                {
-                    reader.JumpTo(resTocPtr);
-                    int testObjId = reader.ReadInt32();
-                    int testObjPtr = reader.ReadInt32();
-                    if (testObjId >= 0 && testObjId < 10000 && TryResolveOffset(testObjPtr, fileSize, baseAddr, out _))
-                    {
-                        return RelFileType.ObjectParam;
-                    }
-                }
-
-                // Check 4: SetLayout (Area ID + Map Count)
-                reader.JumpTo(headerLoc);
-                short areaId = reader.ReadInt16();
-                short mapCount = reader.ReadInt16();
-                int mainListPtr = reader.ReadInt32();
-                if (mapCount > 0 && mapCount < 100 && TryResolveOffset(mainListPtr, fileSize, baseAddr, out uint resMainPtr) && resMainPtr + 8 <= fileSize)
-                {
-                    reader.JumpTo(resMainPtr);
-                    reader.ReadInt16(); // mapNumber
-                    short listCount = reader.ReadInt16();
-                    int listPtr = reader.ReadInt32();
-                    if (listCount >= 0 && listCount < 200 && TryResolveOffset(listPtr, fileSize, baseAddr, out _))
-                    {
-                        return RelFileType.SetLayout;
-                    }
-                }
-
-                // Check 5: EnemyLayout
-                reader.JumpTo(headerLoc);
-                int eListPtr = reader.ReadInt32();
-                int eListCount = reader.ReadInt32();
-                if (eListCount > 0 && eListCount < 500 && TryResolveOffset(eListPtr, fileSize, baseAddr, out uint resEPtr) && resEPtr + 24 <= fileSize)
-                {
-                    return RelFileType.EnemyLayout;
-                }
-
-                // Check 6: LndEffect vs LndEnemyLight
-                reader.JumpTo(headerLoc);
-                int p1 = reader.ReadInt32();
-                int p2 = reader.ReadInt32();
-                int p3 = reader.ReadInt32();
-                int p4 = reader.ReadInt32();
-                if (TryResolveOffset(p1, fileSize, baseAddr, out _) && 
-                    TryResolveOffset(p2, fileSize, baseAddr, out _) && 
-                    TryResolveOffset(p3, fileSize, baseAddr, out _))
-                {
-                    return (p4 != 0 && TryResolveOffset(p4, fileSize, baseAddr, out _)) 
-                        ? RelFileType.LndEffect 
-                        : RelFileType.LndEnemyLight;
-                }
-
-                // Check 7: FogBank
-                if (headerLoc >= 0x2C && (headerLoc - 0x10) % 28 == 0)
-                {
-                    return RelFileType.FogBank;
-                }
-
-                // Check 8: QuestList
-                reader.JumpTo(headerLoc);
-                int qListPtr = reader.ReadInt32();
-                int qCount = reader.ReadInt32();
-                if (qCount > 0 && qCount < 1000 && TryResolveOffset(qListPtr, fileSize, baseAddr, out uint resQPtr) && resQPtr + 8 <= fileSize)
-                {
-                    reader.JumpTo(resQPtr);
-                    reader.ReadInt32(); // QuestNumber
-                    int strPtr = reader.ReadInt32();
-                    if (TryResolveOffset(strPtr, fileSize, baseAddr, out _))
-                    {
-                        return RelFileType.QuestList;
-                    }
+                    catch { }
                 }
             }
 
             return RelFileType.Unknown;
         }
 
-        /// <summary>
-        /// Strips outer NXIF container headers if present, returning the pure REL/NXR payload bytes.
-        /// </summary>
         private static byte[] ExtractPayload(byte[] rawData)
         {
             if (rawData == null || rawData.Length < 16) return rawData;
@@ -335,9 +278,6 @@ namespace SilentTools
             return rawData;
         }
 
-        /// <summary>
-        /// Calculates the base memory address used for absolute pointer rebasing.
-        /// </summary>
         public static uint ComputeBaseAddress(BinaryReaderEx reader, uint headerLoc, uint fileSize)
         {
             uint baseAddr = 0;
@@ -349,7 +289,6 @@ namespace SilentTools
                 int p1 = reader.ReadInt32();
                 int p2 = reader.BaseStream.Position + 4 <= fileSize ? reader.ReadInt32() : 0;
 
-                // FileList probing
                 int maxCat = Math.Min(16, (int)((fileSize - headerLoc) / 4));
                 reader.JumpTo(headerLoc);
                 int firstTopPtr = 0;
@@ -386,7 +325,6 @@ namespace SilentTools
                     }
                 }
 
-                // ObjectParam: count at headerLoc, TOC pointer follows
                 if (p1 > 0 && p1 <= 5000 && p2 > (int)fileSize && p2 < 0x0FFFFFFF)
                 {
                     int tocOff = (int)headerLoc - p1 * 8;
@@ -401,7 +339,6 @@ namespace SilentTools
                     }
                 }
 
-                // ObjectParticleInfo: pointer at headerLoc, count follows
                 if (p2 > 0 && p2 <= 5000 && p1 > (int)fileSize && p1 < 0x0FFFFFFF)
                 {
                     int listOff = (int)headerLoc - p2 * 20;
@@ -416,31 +353,14 @@ namespace SilentTools
                     }
                 }
 
-                // Direct base deduction
                 if (p1 > (int)fileSize && p1 < 0x0FFFFFFF)
                 {
-                    // Check if pointer points directly to payload start at 0x10, 0x20, 0x30, etc.
                     for (uint probeOff = 0x10; probeOff <= 0x80; probeOff += 0x10)
                     {
                         if ((uint)p1 >= probeOff)
                         {
                             uint candidate = (uint)p1 - probeOff;
                             if (candidate % 16 == 0 && ((uint)p1 - candidate) < fileSize)
-                            {
-                                baseAddr = candidate;
-                                break;
-                            }
-                        }
-                    }
-                }
-                else if (p2 > (int)fileSize && p2 < 0x0FFFFFFF)
-                {
-                    for (uint probeOff = 0x10; probeOff <= 0x80; probeOff += 0x10)
-                    {
-                        if ((uint)p2 >= probeOff)
-                        {
-                            uint candidate = (uint)p2 - probeOff;
-                            if (candidate % 16 == 0 && ((uint)p2 - candidate) < fileSize)
                             {
                                 baseAddr = candidate;
                                 break;
@@ -456,9 +376,6 @@ namespace SilentTools
         #endregion
 
         #region Parsing Pipeline
-        /// <summary>
-        /// Parses raw REL/XNR bytes into strongly typed data models.
-        /// </summary>
         public static object ParseRelBytes(byte[] rawData, string filename, out RelFileType relType)
         {
             relType = IdentifyRelType(filename, rawData);
@@ -482,104 +399,41 @@ namespace SilentTools
                 uint baseAddr = ComputeBaseAddress(reader, headerLoc, fileSize);
                 if (headerLoc > fileSize) headerLoc = 0x10;
 
-                // Priority test: try identified type first, then remaining candidates
-                List<RelFileType> typesToTry = new List<RelFileType>();
-                if (relType != RelFileType.Unknown)
+                // Priority: matched descriptor first, then others
+                List<RelFormatDescriptor> descriptorsToTry = new List<RelFormatDescriptor>();
+                foreach (var desc in RelFormats)
                 {
-                    typesToTry.Add(relType);
-                }
-
-                foreach (RelFileType t in Enum.GetValues(typeof(RelFileType)))
-                {
-                    if (t != RelFileType.Unknown && !typesToTry.Contains(t))
+                    if (desc.FileType == relType)
                     {
-                        typesToTry.Add(t);
+                        descriptorsToTry.Insert(0, desc);
+                    }
+                    else
+                    {
+                        descriptorsToTry.Add(desc);
                     }
                 }
 
-                foreach (RelFileType candidate in typesToTry)
+                foreach (var desc in descriptorsToTry)
                 {
                     try
                     {
                         reader.JumpTo(headerLoc);
-                        object parsed = ExecuteParser(candidate, reader, fileSize, baseAddr, headerLoc);
-                        if (parsed != null && IsNonEmptyRelData(parsed))
+                        object parsed = desc.Parser(reader, fileSize, baseAddr, headerLoc);
+                        if (parsed != null && desc.HasContent(parsed))
                         {
-                            relType = candidate;
+                            relType = desc.FileType;
                             return parsed;
                         }
                     }
-                    catch
-                    {
-                        // Proceed to next candidate on failure
-                    }
+                    catch { }
                 }
 
                 throw new InvalidDataException($"Unable to parse REL file '{filename}': Unrecognized structure.");
             }
         }
-
-        private static object ExecuteParser(RelFileType type, BinaryReaderEx reader, uint fileSize, uint baseAddr, uint headerLoc)
-        {
-            switch (type)
-            {
-                case RelFileType.FileList:
-                    return FileListParser.Parse(reader, baseAddr, headerLoc);
-                case RelFileType.Collision:
-                    return CollisionParser.Parse(reader, fileSize, headerLoc);
-                case RelFileType.SetLayout:
-                    return SetFileParser.Parse(reader, fileSize);
-                case RelFileType.ObjectParam:
-                    return ObjectParamParser.Parse(reader, fileSize, baseAddr, headerLoc);
-                case RelFileType.ObjectParticleInfo:
-                    return ObjectParticleInfoParser.Parse(reader, fileSize, baseAddr, headerLoc);
-                case RelFileType.LndEffect:
-                    return LndEffectParser.Parse(reader, fileSize);
-                case RelFileType.LndEnemyLight:
-                    return LndEnemyLightParser.Parse(reader, fileSize);
-                case RelFileType.FogBank:
-                    return FogBankParser.Parse(reader, baseAddr, headerLoc);
-                case RelFileType.LndCommon:
-                    return LndCommonParser.Parse(reader, baseAddr);
-                case RelFileType.StageRouteBlock:
-                    return StageBlockRouteParser.Parse(reader, fileSize, headerLoc);
-                case RelFileType.EnemyLayout:
-                    return EnemyLayoutParser.Parse(reader, baseAddr);
-                case RelFileType.QuestList:
-                    return QuestListParser.Parse(reader, baseAddr);
-                default:
-                    return null;
-            }
-        }
-
-        public static bool IsNonEmptyRelData(object parsedData)
-        {
-            if (parsedData == null) return false;
-            if (parsedData is FileListData fileListData) return fileListData.Categories != null && fileListData.Categories.Count > 0;
-            if (parsedData is CollisionMeshData colData) return colData.Vertices != null && colData.Vertices.Count > 0 && colData.Triangles != null && colData.Triangles.Count > 0;
-            if (parsedData is SetFileData setData) return setData.MapData != null && setData.MapData.Count > 0;
-            if (parsedData is EnemyLayoutData enemyData) return enemyData.Spawns != null && enemyData.Spawns.Count > 0;
-            if (parsedData is ObjectParamData paramData) return paramData.ObjectDefinitions != null && paramData.ObjectDefinitions.Count > 0;
-            if (parsedData is ObjectParticleInfoData partData) return partData.Entries != null && partData.Entries.Count > 0;
-            if (parsedData is LndEffectData effect)
-            {
-                return (effect.Fog != null && effect.Fog.FarPlane > 0f) ||
-                       (effect.PlayerLight1 != null && effect.PlayerLight1.LightColor != Color.white) ||
-                       effect.SunPosition != Vector3.zero;
-            }
-            if (parsedData is List<LndFogData> fogs) return fogs != null && fogs.Count > 0;
-            if (parsedData is LndCommonData common) return !string.IsNullOrEmpty(common.NblFilenameFragment) || common.UnknownFloat != 0f;
-            if (parsedData is LndEnemyLightData el) return el != null && el.Light1 != null && el.Light1.LightColor != Color.white;
-            if (parsedData is List<QuestListingData> ql) return ql != null && ql.Count > 0;
-            if (parsedData is StageBlockRouteData rd) return rd != null && rd.Offsets != null && rd.Offsets.Count > 0;
-            return false;
-        }
         #endregion
 
-        #region Unity Asset Resolution & Hierarchy Construction
-        /// <summary>
-        /// Builds a representative Unity GameObject hierarchy from parsed REL data.
-        /// </summary>
+        #region Unity Asset Resolution
         public static GameObject ResolveRelAsset(
             object parsedData,
             RelFileType relType,
@@ -589,52 +443,13 @@ namespace SilentTools
         {
             GameObject rootGO = new GameObject(assetName);
 
-            switch (relType)
+            foreach (var desc in RelFormats)
             {
-                case RelFileType.SetLayout:
-                    if (parsedData is SetFileData setData)
-                        BuildSetLayoutHierarchy(setData, rootGO, scale, ctx?.assetPath, ctx);
-                    break;
-                case RelFileType.LndEffect:
-                    if (parsedData is LndEffectData effect)
-                        BuildLndEffectHierarchy(effect, rootGO);
-                    break;
-                case RelFileType.LndEnemyLight:
-                    if (parsedData is LndEnemyLightData enemyLight)
-                        BuildLndEnemyLightHierarchy(enemyLight, rootGO);
-                    break;
-                case RelFileType.FogBank:
-                    if (parsedData is List<LndFogData> fogs)
-                        BuildFogBankHierarchy(fogs, rootGO);
-                    break;
-                case RelFileType.LndCommon:
-                    if (parsedData is LndCommonData common)
-                        BuildLndCommonHierarchy(common, rootGO);
-                    break;
-                case RelFileType.EnemyLayout:
-                    if (parsedData is EnemyLayoutData enemy)
-                        BuildEnemyLayoutHierarchy(enemy, rootGO);
-                    break;
-                case RelFileType.QuestList:
-                    if (parsedData is List<QuestListingData> qList)
-                        BuildQuestListHierarchy(qList, rootGO);
-                    break;
-                case RelFileType.FileList:
-                    if (parsedData is FileListData fList)
-                        BuildFileListHierarchy(fList, rootGO);
-                    break;
-                case RelFileType.ObjectParam:
-                    if (parsedData is ObjectParamData paramData)
-                        BuildObjectParamHierarchy(paramData, rootGO, scale);
-                    break;
-                case RelFileType.ObjectParticleInfo:
-                    if (parsedData is ObjectParticleInfoData partData)
-                        BuildObjectParticleInfoHierarchy(partData, rootGO);
-                    break;
-                case RelFileType.Collision:
-                    if (parsedData is CollisionMeshData colData)
-                        CollisionParser.CreateUnityMeshAndColliders(colData, scale, $"{assetName}_CollisionMesh", rootGO, ctx);
-                    break;
+                if (desc.FileType == relType && desc.BuildHierarchy != null)
+                {
+                    desc.BuildHierarchy(parsedData, rootGO, scale, ctx?.assetPath, ctx);
+                    return rootGO;
+                }
             }
 
             return rootGO;
@@ -684,7 +499,6 @@ namespace SilentTools
                         meta.headerInt3 = obj.HeaderInt3;
                         meta.metadata = obj.Metadata;
 
-                        // Link associated obj_param colliders and models
                         if (stageCtx.ObjectParams?.ObjectDefinitions.TryGetValue(obj.ObjID, out ObjectParamEntry paramEntry) == true)
                         {
                             if (paramEntry.Hitbox != null)
