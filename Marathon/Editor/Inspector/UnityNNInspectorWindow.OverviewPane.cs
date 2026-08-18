@@ -184,7 +184,14 @@ namespace SilentTools.Editor
                         break;
                     case 2:
                         if (data.Object?.Materials != null && data.Object.Materials.Count > 0)
-                            DumpCategoryJson(data.Object.Materials);
+                            DumpCategoryJson(new
+                            {
+                                Materials = data.Object.Materials,
+                                Colours = data.Object.MaterialColours,
+                                Logics = data.Object.MaterialLogics,
+                                TextureMaps = data.Object.TextureMaps,
+                                Textures = data.TextureList?.NinjaTextureFiles
+                            });
                         else if (data.TextureList != null)
                             DumpCategoryJson(data.TextureList.NinjaTextureFiles);
                         else
