@@ -4,7 +4,6 @@ using UnityEditor;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
 using Marathon.Formats.Mesh.Ninja;
 
 namespace SilentTools
@@ -13,11 +12,65 @@ namespace SilentTools
     /// Converts Sega NN BAMS/Radian motion tracks into native Unity AnimationClip curves.
     /// Handles node bone transformations, UV scrolling tracks, and material color animations.
     /// </summary>
+    public struct TrackBindingDef
+    {
+        public uint CategoryMask; // 1 = Node, 16 = Material
+        public uint Mask;         // 0 if channel is a companion-only default (e.g., UV Tiling Scale)
+        public Type ComponentType;
+        public string PropertyName;
+        public string GroupKey;
+        public int ChannelIndex;
+        public float DefaultRestValue;
+        public bool InvertSign;
+    }
+
     public static class NinjaMotionResolver
     {
-        private static readonly string[] MotionExtensions = new[] { ".xnm", ".gnm", ".znm" };
-        private static readonly string[] MaterialMotionExtensions = new[] { ".xnv", ".gnv", ".znv" };
-        private static readonly string[] ModelExtensions = new[] { ".xna", ".xnn", ".xnj", ".xno", ".gna", ".gnn", ".gno" };
+        private static readonly string[] MotionExtensions = { ".xnm", ".gnm", ".znm" };
+        private static readonly string[] MaterialMotionExtensions = { ".xnv", ".gnv", ".znv" };
+        private static readonly string[] ModelExtensions = { ".xna", ".xnn", ".xnj", ".xno", ".gna", ".gnn", ".gno" };
+
+        public static readonly TrackBindingDef[] AllTrackBindings = new[]
+        {
+            // --- Node Translation (XYZ) ---
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x100U, ComponentType = typeof(Transform), PropertyName = "localPosition.x", GroupKey = "localPosition", ChannelIndex = 0, DefaultRestValue = 0f, InvertSign = true },
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x200U, ComponentType = typeof(Transform), PropertyName = "localPosition.y", GroupKey = "localPosition", ChannelIndex = 1, DefaultRestValue = 0f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x400U, ComponentType = typeof(Transform), PropertyName = "localPosition.z", GroupKey = "localPosition", ChannelIndex = 2, DefaultRestValue = 0f, InvertSign = false },
+
+            // --- Node Rotation (Euler) ---
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x800U, ComponentType = typeof(Transform), PropertyName = "localEulerAnglesRaw.x", GroupKey = "localEulerAnglesRaw", ChannelIndex = 0, DefaultRestValue = 0f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x1000U, ComponentType = typeof(Transform), PropertyName = "localEulerAnglesRaw.y", GroupKey = "localEulerAnglesRaw", ChannelIndex = 1, DefaultRestValue = 0f, InvertSign = true },
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x2000U, ComponentType = typeof(Transform), PropertyName = "localEulerAnglesRaw.z", GroupKey = "localEulerAnglesRaw", ChannelIndex = 2, DefaultRestValue = 0f, InvertSign = true },
+
+            // --- Node Scaling (XYZ) ---
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x8000U, ComponentType = typeof(Transform), PropertyName = "localScale.x", GroupKey = "localScale", ChannelIndex = 0, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x10000U, ComponentType = typeof(Transform), PropertyName = "localScale.y", GroupKey = "localScale", ChannelIndex = 1, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 1, Mask = 0x20000U, ComponentType = typeof(Transform), PropertyName = "localScale.z", GroupKey = "localScale", ChannelIndex = 2, DefaultRestValue = 1f, InvertSign = false },
+
+            // --- Material Diffuse Color (_Color) ---
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x200U, ComponentType = typeof(Renderer), PropertyName = "material._Color.r", GroupKey = "_Color", ChannelIndex = 0, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x400U, ComponentType = typeof(Renderer), PropertyName = "material._Color.g", GroupKey = "_Color", ChannelIndex = 1, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x800U, ComponentType = typeof(Renderer), PropertyName = "material._Color.b", GroupKey = "_Color", ChannelIndex = 2, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x1000U, ComponentType = typeof(Renderer), PropertyName = "material._Color.a", GroupKey = "_Color", ChannelIndex = 3, DefaultRestValue = 1f, InvertSign = false },
+
+            // --- Material Ambient Color (_AmbientColor) ---
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x40000U, ComponentType = typeof(Renderer), PropertyName = "material._AmbientColor.r", GroupKey = "_AmbientColor", ChannelIndex = 0, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x80000U, ComponentType = typeof(Renderer), PropertyName = "material._AmbientColor.g", GroupKey = "_AmbientColor", ChannelIndex = 1, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x100000U, ComponentType = typeof(Renderer), PropertyName = "material._AmbientColor.b", GroupKey = "_AmbientColor", ChannelIndex = 2, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0, ComponentType = typeof(Renderer), PropertyName = "material._AmbientColor.a", GroupKey = "_AmbientColor", ChannelIndex = 3, DefaultRestValue = 1f, InvertSign = false },
+
+            // --- Material Specular Color (_SpecColor) ---
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x2000U, ComponentType = typeof(Renderer), PropertyName = "material._SpecColor.r", GroupKey = "_SpecColor", ChannelIndex = 0, DefaultRestValue = 0f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x4000U, ComponentType = typeof(Renderer), PropertyName = "material._SpecColor.g", GroupKey = "_SpecColor", ChannelIndex = 1, DefaultRestValue = 0f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x8000U, ComponentType = typeof(Renderer), PropertyName = "material._SpecColor.b", GroupKey = "_SpecColor", ChannelIndex = 2, DefaultRestValue = 0f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0, ComponentType = typeof(Renderer), PropertyName = "material._SpecColor.a", GroupKey = "_SpecColor", ChannelIndex = 3, DefaultRestValue = 1f, InvertSign = false },
+
+            // --- Material UV Scale & Offset (_MainTex_ST) ---
+            new TrackBindingDef { CategoryMask = 16, Mask = 0, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.x", GroupKey = "_MainTex_ST", ChannelIndex = 0, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.y", GroupKey = "_MainTex_ST", ChannelIndex = 1, DefaultRestValue = 1f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x800000U, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.z", GroupKey = "_MainTex_ST", ChannelIndex = 2, DefaultRestValue = 0f, InvertSign = false },
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x1000000U, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.w", GroupKey = "_MainTex_ST", ChannelIndex = 3, DefaultRestValue = 0f, InvertSign = false }
+        };
 
         #region Angle Conversion Helpers
         /// <summary>
@@ -58,11 +111,7 @@ namespace SilentTools
             }
 
             public override bool Equals(object obj) => obj is PropertyKey other && Equals(other);
-
-            public override int GetHashCode()
-            {
-                return HashCode.Combine(TargetPath, ComponentType, PropertyName);
-            }
+            public override int GetHashCode() => HashCode.Combine(TargetPath, ComponentType, PropertyName);
         }
 
         private class SubMotionSegment
@@ -318,42 +367,35 @@ namespace SilentTools
             float scale,
             MotionType parentType)
         {
-            bool isNode = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) is MotionType.NND_MOTIONTYPE_NODE or 0;
-            bool isMat = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
             uint flags = (uint)subMotion.Type;
+            uint cat = (uint)parentType & 31U;
+            if (cat == 0) cat = 1; // Default to node motion category
 
-            // 1. Vector3 Tracks (Translation, Scale, Diffuse RGB)
+            // 1. Vector3 Keyframe Tracks
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_VECTOR)
             {
-                bool hasTranslation = isNode && (flags & 0x700U) != 0;
-                bool hasScale = isNode && (flags & 0x38000U) != 0;
-                bool hasColor = isMat && (flags & 0xE00U) != 0;
-
-                string prefix = hasTranslation ? "localPosition" : (hasScale ? "localScale" : "material._Color");
-                Type compType = isNode ? typeof(Transform) : typeof(Renderer);
-                string[] suffixes = isNode ? new[] { ".x", ".y", ".z" } : new[] { ".r", ".g", ".b" };
-
-                bool[] active = hasTranslation
-                    ? new[] { (flags & 0x100U) != 0, (flags & 0x200U) != 0, (flags & 0x400U) != 0 }
-                    : (hasScale
-                        ? new[] { (flags & 0x8000U) != 0, (flags & 0x10000U) != 0, (flags & 0x20000U) != 0 }
-                        : new[] { (flags & 0x200U) != 0, (flags & 0x400U) != 0, (flags & 0x800U) != 0 });
-
-                foreach (var objKf in subMotion.Keyframes)
+                foreach (var binding in AllTrackBindings)
                 {
-                    var kf = (NinjaKeyframe.NNS_MOTION_KEY_VECTOR)objKf;
-                    float time = (kf.Frame / 60.0f) * timeScale;
-                    Vector3 val = hasTranslation
-                        ? new Vector3(-kf.Value.x * scale, kf.Value.y * scale, kf.Value.z * scale)
-                        : kf.Value;
-
-                    for (int c = 0; c < 3; c++)
+                    if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
                     {
-                        if (active[c])
+                        PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, binding.PropertyName);
+
+                        foreach (var objKf in subMotion.Keyframes)
                         {
-                            PropertyKey key = new PropertyKey(targetPath, compType, prefix + suffixes[c]);
-                            float channelVal = c == 0 ? val.x : (c == 1 ? val.y : val.z);
-                            AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, channelVal));
+                            var kf = (NinjaKeyframe.NNS_MOTION_KEY_VECTOR)objKf;
+                            float time = (kf.Frame / 60.0f) * timeScale;
+                            float rawVal = binding.ChannelIndex switch
+                            {
+                                0 => kf.Value.x,
+                                1 => kf.Value.y,
+                                2 => kf.Value.z,
+                                _ => 0f
+                            };
+
+                            if (binding.GroupKey == "localPosition") rawVal *= scale;
+                            if (binding.InvertSign) rawVal = -rawVal;
+
+                            AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, rawVal));
                         }
                     }
                 }
@@ -379,75 +421,41 @@ namespace SilentTools
                 return;
             }
 
-            // 3. Scalar Tracks (Single Axis Translation, Rotation, UV Offset)
-            List<PropertyKey> keys = GetTargetPropertyKeys(subMotion.Type, parentType, targetPath);
-            if (keys.Count == 0) return;
-
-            foreach (var kf in subMotion.Keyframes)
+            // 3. Scalar Keyframe Tracks (Using Declarative Binding Table)
+            foreach (var binding in AllTrackBindings)
             {
-                float time = 0f;
-                float scalar = 0f;
+                if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
+                {
+                    PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, binding.PropertyName);
 
-                if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32)
-                {
-                    time = (s32.Frame / 60f) * timeScale;
-                    scalar = (flags & 8U) != 0 ? Bams32ToDegrees(s32.Value) : s32.Value;
-                }
-                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f)
-                {
-                    time = (f.Frame / 60f) * timeScale;
-                    scalar = (flags & 4U) != 0 ? RadiansToDegrees(f.Value) : f.Value;
-                }
-                else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16)
-                {
-                    time = (s16.Frame / 60f) * timeScale;
-                    scalar = BamsToDegrees(s16.Value);
-                }
+                    foreach (var kf in subMotion.Keyframes)
+                    {
+                        float time = 0f;
+                        float scalar = 0f;
 
-                foreach (var key in keys)
-                {
-                    float val = scalar;
-                    if (key.PropertyName.Contains("Position")) val *= scale;
-                    if (key.PropertyName.EndsWith(".x") || key.PropertyName.EndsWith("AnglesRaw.y") || key.PropertyName.EndsWith("AnglesRaw.z")) val *= -1f;
+                        if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32)
+                        {
+                            time = (s32.Frame / 60f) * timeScale;
+                            scalar = (flags & 8U) != 0 ? Bams32ToDegrees(s32.Value) : s32.Value;
+                        }
+                        else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f)
+                        {
+                            time = (f.Frame / 60f) * timeScale;
+                            scalar = (flags & 4U) != 0 ? RadiansToDegrees(f.Value) : f.Value;
+                        }
+                        else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16)
+                        {
+                            time = (s16.Frame / 60f) * timeScale;
+                            scalar = BamsToDegrees(s16.Value);
+                        }
 
-                    AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, val));
+                        if (binding.GroupKey == "localPosition") scalar *= scale;
+                        if (binding.InvertSign) scalar = -scalar;
+
+                        AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, scalar));
+                    }
                 }
             }
-        }
-
-        private static List<PropertyKey> GetTargetPropertyKeys(SubMotionType subType, MotionType parentType, string path)
-        {
-            List<PropertyKey> keys = new List<PropertyKey>();
-            bool isNode = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) is MotionType.NND_MOTIONTYPE_NODE or 0;
-            bool isMat = (parentType & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL;
-            uint val = (uint)subType;
-
-            if (isNode)
-            {
-                if ((val & 0x100U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localPosition.x"));
-                if ((val & 0x200U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localPosition.y"));
-                if ((val & 0x400U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localPosition.z"));
-
-                if ((val & 0x800U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localEulerAnglesRaw.x"));
-                if ((val & 0x1000U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localEulerAnglesRaw.y"));
-                if ((val & 0x2000U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localEulerAnglesRaw.z"));
-
-                if ((val & 0x8000U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localScale.x"));
-                if ((val & 0x10000U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localScale.y"));
-                if ((val & 0x20000U) != 0) keys.Add(new PropertyKey(path, typeof(Transform), "localScale.z"));
-            }
-            else if (isMat)
-            {
-                if ((val & 0x200U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._Color.r"));
-                if ((val & 0x400U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._Color.g"));
-                if ((val & 0x800U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._Color.b"));
-                if ((val & 0x1000U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._Color.a"));
-
-                // UV Offset Tracks
-                if ((val & 0x800000U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._MainTex_ST.z"));
-                if ((val & 0x1000000U) != 0) keys.Add(new PropertyKey(path, typeof(Renderer), "material._MainTex_ST.w"));
-            }
-            return keys;
         }
 
         private static void FillMissingCompanionChannels(
@@ -457,65 +465,61 @@ namespace SilentTools
             float maxTime)
         {
             var existingKeys = new List<PropertyKey>(propertySegments.Keys);
-            Regex vectorPattern = new Regex(@"^(.*?)(localPosition|localEulerAnglesRaw|localScale|_MainTex_ST|_Color|_SpecColor|_EmissionColor)(\.[xyzw|rgba])$");
             HashSet<string> processedGroups = new HashSet<string>();
 
             foreach (var key in existingKeys)
             {
-                Match m = vectorPattern.Match(key.PropertyName);
-                if (!m.Success) continue;
+                TrackBindingDef? matchedBinding = null;
+                foreach (var b in AllTrackBindings)
+                {
+                    if (b.PropertyName == key.PropertyName && b.ComponentType == key.ComponentType)
+                    {
+                        matchedBinding = b;
+                        break;
+                    }
+                }
 
-                string propBase = m.Groups[1].Value;
-                string propType = m.Groups[2].Value;
-                string groupKey = $"{key.TargetPath}|{key.ComponentType.Name}|{propBase}{propType}";
+                if (!matchedBinding.HasValue) continue;
 
+                string groupKey = $"{key.TargetPath}|{key.ComponentType.Name}|{matchedBinding.Value.GroupKey}";
                 if (!processedGroups.Add(groupKey)) continue;
 
                 Transform nodeTr = FindNodeTransform(key.TargetPath, nodeTransforms, nodeHierarchyTargets);
-                string[] suffixes = (propType is "_Color" or "_SpecColor" or "_EmissionColor")
-                    ? new[] { ".r", ".g", ".b", ".a" }
-                    : (propType == "_MainTex_ST" ? new[] { ".x", ".y", ".z", ".w" } : new[] { ".x", ".y", ".z" });
 
-                for (int s = 0; s < suffixes.Length; s++)
+                foreach (var companion in AllTrackBindings)
                 {
-                    PropertyKey channelKey = new PropertyKey(key.TargetPath, key.ComponentType, propBase + propType + suffixes[s]);
-                    if (!propertySegments.ContainsKey(channelKey))
+                    if (companion.GroupKey == matchedBinding.Value.GroupKey && companion.ComponentType == key.ComponentType)
                     {
-                        float defVal = GetDefaultChannelValue(propType, s, nodeTr);
-                        var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT };
-                        seg.Keyframes.Add(new Keyframe(0f, defVal, float.PositiveInfinity, float.PositiveInfinity));
-
-                        if (maxTime > 0.001f)
+                        PropertyKey channelKey = new PropertyKey(key.TargetPath, companion.ComponentType, companion.PropertyName);
+                        if (!propertySegments.ContainsKey(channelKey))
                         {
-                            seg.Keyframes.Add(new Keyframe(maxTime, defVal, float.PositiveInfinity, float.PositiveInfinity));
-                        }
+                            float defVal = GetDefaultChannelValue(companion, nodeTr);
+                            var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT };
+                            seg.Keyframes.Add(new Keyframe(0f, defVal, float.PositiveInfinity, float.PositiveInfinity));
 
-                        propertySegments[channelKey] = new List<SubMotionSegment> { seg };
+                            if (maxTime > 0.001f)
+                            {
+                                seg.Keyframes.Add(new Keyframe(maxTime, defVal, float.PositiveInfinity, float.PositiveInfinity));
+                            }
+
+                            propertySegments[channelKey] = new List<SubMotionSegment> { seg };
+                        }
                     }
                 }
             }
         }
 
-        private static float GetDefaultChannelValue(string propType, int index, Transform tr)
+        private static float GetDefaultChannelValue(TrackBindingDef binding, Transform tr)
         {
-            switch (propType)
+            if (tr == null) return binding.DefaultRestValue;
+
+            return binding.GroupKey switch
             {
-                case "localPosition":
-                    return tr != null ? (index == 0 ? tr.localPosition.x : (index == 1 ? tr.localPosition.y : tr.localPosition.z)) : 0f;
-                case "localEulerAnglesRaw":
-                    return tr != null ? (index == 0 ? tr.localEulerAngles.x : (index == 1 ? tr.localEulerAngles.y : tr.localEulerAngles.z)) : 0f;
-                case "localScale":
-                    return tr != null ? (index == 0 ? tr.localScale.x : (index == 1 ? tr.localScale.y : tr.localScale.z)) : 1f;
-                case "_MainTex_ST":
-                    return (index is 0 or 1) ? 1.0f : 0.0f; // Scale X/Y = 1.0, Offset Z/W = 0.0
-                case "_Color":
-                    return 1.0f;
-                case "_SpecColor":
-                case "_EmissionColor":
-                    return index == 3 ? 1.0f : 0.0f; // Alpha = 1.0, RGB = 0.0
-                default:
-                    return 0f;
-            }
+                "localPosition" => binding.ChannelIndex == 0 ? tr.localPosition.x : (binding.ChannelIndex == 1 ? tr.localPosition.y : tr.localPosition.z),
+                "localEulerAnglesRaw" => binding.ChannelIndex == 0 ? tr.localEulerAngles.x : (binding.ChannelIndex == 1 ? tr.localEulerAngles.y : tr.localEulerAngles.z),
+                "localScale" => binding.ChannelIndex == 0 ? tr.localScale.x : (binding.ChannelIndex == 1 ? tr.localScale.y : tr.localScale.z),
+                _ => binding.DefaultRestValue
+            };
         }
 
         private static void AddKeyframe(
@@ -545,13 +549,29 @@ namespace SilentTools
 
         private static Transform FindNodeTransform(string path, List<Transform> nodeTransforms, string[] targets)
         {
-            if (nodeTransforms == null) return null;
+            if (nodeTransforms == null || nodeTransforms.Count == 0) return null;
 
+            // Direct match against resolved hierarchy targets
+            if (targets != null)
+            {
+                for (int i = 0; i < targets.Length && i < nodeTransforms.Count; i++)
+                {
+                    if (targets[i] == path && nodeTransforms[i] != null) return nodeTransforms[i];
+                }
+            }
+
+            // Fallback numeric index parsing (e.g. "0000", "0003")
+            if (int.TryParse(path, out int nodeIdx) && nodeIdx >= 0 && nodeIdx < nodeTransforms.Count)
+            {
+                return nodeTransforms[nodeIdx];
+            }
+
+            // Transform name matching
             for (int i = 0; i < nodeTransforms.Count; i++)
             {
-                if (i < targets.Length && targets[i] == path) return nodeTransforms[i];
                 if (nodeTransforms[i] != null && nodeTransforms[i].name == path) return nodeTransforms[i];
             }
+
             return null;
         }
 
@@ -593,7 +613,6 @@ namespace SilentTools
                 }
                 else if (keys.Length >= 2)
                 {
-                    // Linear tangent calculation across keyframe intervals
                     for (int i = 0; i < keys.Length - 1; i++)
                     {
                         float dt = keys[i + 1].time - keys[i].time;
@@ -614,7 +633,6 @@ namespace SilentTools
             if (allKfs.Count == 0) return null;
             allKfs.Sort((a, b) => a.time.CompareTo(b.time));
 
-            // Remove co-located duplicate keyframes
             List<Keyframe> unique = new List<Keyframe>();
             for (int i = 0; i < allKfs.Count; i++)
             {
