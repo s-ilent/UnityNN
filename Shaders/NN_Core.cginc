@@ -14,6 +14,7 @@ half4 _Color;
 half4 _AmbientColor;
 sampler2D _MainTex;
 float4 _MainTex_ST;
+float4 _MainTex_TexelSize;
 
 float _Unlit;
 float _DisableFog;
@@ -37,6 +38,7 @@ float _MainTex3BlendMode;
 float _UseMatcap;
 sampler2D _MatcapTex;
 half4 _MatcapColor;
+float4 _MatcapTex_TexelSize;
 float _MatcapMode; // 0: Multiply, 1: Add, 2: Replace
 
 // Normal Mapping
@@ -191,20 +193,63 @@ half2 getMatcapUVs(half3 normal, half3 viewDir)
     return half2(dot(worldViewRight, normal), dot(worldViewUp, normal)) * 0.5 + 0.5;
 }
 
+float4 cubic(float v)
+{
+    float4 n = float4(1.0, 2.0, 3.0, 4.0) - v;
+    float4 s = n * n * n;
+    float x = s.x;
+    float y = s.y - 4.0 * s.x;
+    float z = s.z - 4.0 * s.y + 6.0 * s.x;
+    float w = 6.0 - x - y - z;
+    return float4(x, y, z, w);
+}
+
+float4 SampleBicubicBSpline(sampler2D tex, float4 texelSize, float2 uv)
+{
+    float2 coord = uv * texelSize.zw - 0.5;
+    float fx = frac(coord.x);
+    float fy = frac(coord.y);
+    coord.x -= fx;
+    coord.y -= fy;
+
+    float4 xcubic = cubic(fx);
+    float4 ycubic = cubic(fy);
+
+    float4 c = float4(coord.x - 0.5, coord.x + 1.5, coord.y - 0.5, coord.y + 1.5);
+    float4 s = float4(xcubic.x + xcubic.y, xcubic.z + xcubic.w, ycubic.x + ycubic.y, ycubic.z + ycubic.w);
+    float4 offset = c + float4(xcubic.y, xcubic.w, ycubic.y, ycubic.w) / s;
+
+    float4 sample0 = tex2D(tex, float2(offset.x, offset.z) * texelSize.xy);
+    float4 sample1 = tex2D(tex, float2(offset.y, offset.z) * texelSize.xy);
+    float4 sample2 = tex2D(tex, float2(offset.x, offset.w) * texelSize.xy);
+    float4 sample3 = tex2D(tex, float2(offset.y, offset.w) * texelSize.xy);
+
+    float sx = s.x / (s.x + s.y);
+    float sy = s.z / (s.z + s.w);
+
+    return lerp(
+        lerp(sample3, sample2, sx),
+        lerp(sample1, sample0, sx), sy);
+}
+
 MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
 {
     MaterialInputs material;
     initMaterial(material);
 
-    // 1. Primary Surface with PSU Gamma-Space Colour Application & Doubling
-    half4 mainTex = tex2D(_MainTex, i.uv0.xy);
+    //half4 mainTex = tex2D(_MainTex, i.uv0.xy);
+    half4 mainTex = SampleBicubicBSpline(_MainTex, _MainTex_TexelSize, i.uv0.xy);
     half4 vcolor = i.color;
     vcolor.rgb *= _VertexColorScale;
 
+    // Most materials are grey, anything brighter is glowy. So scale by grey. 
+    float greyLevel = 150.0f / 255.0f;
     // Convert texture * material diffuse to gamma space for vertex color multiplication
     float3 linearToGamma = LinearToGammaSpace((mainTex * _Color).rgb);
-    float3 gammaToLinear = GammaToLinearSpace((float4(linearToGamma, 0.0) * vcolor).rgb);
+    float3 gammaBlended = (linearToGamma * vcolor.rgb) / greyLevel;
+    float3 gammaToLinear = GammaToLinearSpace(gammaBlended);
 
+    // Doesn't apply since UNITY_HDR_ON is never set. 
 #ifdef UNITY_HDR_ON
     float4 colorSpaceMult = unity_ColorSpaceDouble;
 #else
@@ -246,7 +291,8 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     {
         float3 viewDir = normalize(_WorldSpaceCameraPos - i.worldPos);
         float2 matcapUV = getMatcapUVs(N, viewDir);
-        half4 matcapCol = tex2D(_MatcapTex, matcapUV) * _MatcapColor;
+        //half4 matcapCol = tex2D(_MatcapTex, matcapUV) * _MatcapColor;
+        half4 matcapCol = SampleBicubicBSpline(_MatcapTex, _MatcapTex_TexelSize, matcapUV) * _MatcapColor;
 
         if (_MatcapMode < 0.5)
             material.baseColor.rgb *= matcapCol.rgb;
@@ -305,7 +351,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     float3 L = normalize(UnityWorldSpaceLightDir(shading.position));
     float NdotL = max(0.0, dot(shading.normal, L));
     
-    half3 baseBrightness = UNITY_PI * _LightColor0.rgb;
+    half3 baseBrightness = _LightColor0.rgb;
     // Todo: Apply lighting to meshes with normals, but only apply color to meshes without.
     // * NdotL * shading.attenuation;
     // We don't have a good way of telling if a mesh had normals before importing though... 
@@ -331,11 +377,12 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     // should have the cutout applied to them even though they're additive...
 
     float3 finalColor;
-
     bool isUnlit = (_Unlit > 0.5);
     bool noFog = (_DisableFog > 0.5);
+    
     if (isUnlit)
     {
+    /*
         if (isForwardAdd)
         {
             return half4(0, 0, 0, material.baseColor.a);
@@ -343,9 +390,9 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
         half3 finalRGB = baseBrightness * material.baseColor.rgb + material.emissive;
         if (!noFog) applyUnityFog(finalRGB, fogDepth);
         return half4(finalRGB, material.baseColor.a);
-        
-        diffuse = 1.0;
-        ambient = 0.0;
+    */    
+        diffuse = baseBrightness;
+        ambient = 0;
     }
     
     if (isForwardAdd)
