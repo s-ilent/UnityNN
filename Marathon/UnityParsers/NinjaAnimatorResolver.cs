@@ -18,12 +18,11 @@ namespace SilentTools
             List<Transform> nodeTransforms,
             string assetName,
             string assetPath,
-            float scale,
-            MeshImportMode importMode,
-            bool generateController,
+            NinjaImportSettings settings,
             AssetImportContext ctx)
         {
             if (rootGO == null || loader?.Data == null) return;
+            settings ??= NinjaImportSettings.Default;
 
             List<AnimationClip> loadedClips = new List<AnimationClip>();
             HashSet<string> loadedClipNames = new HashSet<string>();
@@ -42,7 +41,7 @@ namespace SilentTools
 
             if (nodeMotion != null)
             {
-                mainNodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", scale, rootGO, nodeTransforms, importMode);
+                mainNodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
                 if (mainNodeClip != null && loadedClipNames.Add(mainNodeClip.name))
                 {
                     ctx.AddObjectToAsset("NodeAnimation", mainNodeClip);
@@ -53,7 +52,7 @@ namespace SilentTools
 
             if (matMotion != null)
             {
-                mainMatClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", scale, rootGO, nodeTransforms, importMode);
+                mainMatClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
                 if (mainMatClip != null && loadedClipNames.Add(mainMatClip.name))
                 {
                     ctx.AddObjectToAsset("MaterialAnimation", mainMatClip);
@@ -95,7 +94,7 @@ namespace SilentTools
                             {
                                 ctx.DependsOnSourceAsset(animPath);
                                 string clipId = $"{prefix}_{key}";
-                                AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, clipId, scale, rootGO, nodeTransforms, importMode);
+                                AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, clipId, settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
                                 if (clip != null)
                                 {
                                     if (loadedClipNames.Add(clip.name))
@@ -151,7 +150,7 @@ namespace SilentTools
                 Animator animator = rootGO.AddComponent<Animator>();
                 bool isSingleAnim = distinctBoneFiles.Count <= 1 && distinctTexFiles.Count <= 1;
 
-                if (generateController && isSingleAnim && (mainNodeClip != null || mainMatClip != null))
+                if (settings.GenerateAnimatorController && isSingleAnim && (mainNodeClip != null || mainMatClip != null))
                 {
                     BuildTwoLayerAnimatorController(assetName, mainNodeClip, mainMatClip, animator, ctx);
                 }

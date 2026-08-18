@@ -39,6 +39,34 @@ namespace SilentTools
         public Texture2D overrideTexture;
     }
 
+    [Serializable]
+    public class NinjaImportSettings
+    {
+        // Mesh & Geometry
+        public float Scale = 0.10f;
+        public MeshImportMode MeshImportMode = MeshImportMode.CombinedByNode;
+        public bool GenerateMeshColliders = false;
+
+        // Materials
+        public bool ImportMaterials = true;
+        public MaterialLocation MaterialLocation = MaterialLocation.EmbedInPrefab;
+        public MaterialSearch MaterialSearch = MaterialSearch.RecursiveSubFolder;
+        public MaterialNaming MaterialNaming = MaterialNaming.ByMaterialName;
+        public string MaterialSearchPath = "Assets/Materials";
+        public List<MaterialRemapEntry> MaterialRemaps = new List<MaterialRemapEntry>();
+
+        // Textures
+        public string[] TextureSearchPaths = Array.Empty<string>();
+        public List<TextureRemapEntry> TextureRemaps = new List<TextureRemapEntry>();
+
+        // Animation
+        public bool ImportAnimation = true;
+        public bool GenerateAnimatorController = false;
+        public string[] NodeHierarchyTarget = Array.Empty<string>();
+
+        public static NinjaImportSettings Default => new NinjaImportSettings();
+    }
+
     [ScriptedImporter(2, new[] {
         // Xbox / PC formats
         "xno", "xna", "xnj", "xnm", "xnv", "xnt", "xnn", "xnc", "xnl", "xnd", "xng", "xne", "xni", "xnf", "xnr", "rel", "nbl",
@@ -52,6 +80,7 @@ namespace SilentTools
         [Header("Mesh Settings")]
         public float m_Scale = 0.10f;
         public MeshImportMode m_MeshImportMode = MeshImportMode.CombinedByNode;
+        public bool m_GenerateMeshColliders = false;
 
         [Header("Material Settings")]
         public bool m_ImportMaterials = true;
@@ -72,11 +101,30 @@ namespace SilentTools
         public bool m_GenerateAnimatorController = false;
         public string[] m_NodeHierarchyTarget;
 
+        public NinjaImportSettings GetSettings() => new NinjaImportSettings
+        {
+            Scale = m_Scale,
+            MeshImportMode = m_MeshImportMode,
+            GenerateMeshColliders = m_GenerateMeshColliders,
+            ImportMaterials = m_ImportMaterials,
+            MaterialLocation = m_MaterialLocation,
+            MaterialSearch = m_MaterialSearch,
+            MaterialNaming = m_MaterialNaming,
+            MaterialSearchPath = m_MaterialSearchPath,
+            MaterialRemaps = m_MaterialRemaps,
+            TextureSearchPaths = m_TextureSearchPaths ?? Array.Empty<string>(),
+            TextureRemaps = m_TextureRemaps,
+            ImportAnimation = m_ImportAnimation,
+            GenerateAnimatorController = m_GenerateAnimatorController,
+            NodeHierarchyTarget = m_NodeHierarchyTarget ?? Array.Empty<string>()
+        };
+
         public override void OnImportAsset(AssetImportContext ctx)
         {
             string ext = Path.GetExtension(ctx.assetPath).ToLowerInvariant();
             string assetName = Path.GetFileNameWithoutExtension(ctx.assetPath);
             Texture2D icon = NinjaIconResolver.GetIconForExtension(ext);
+            NinjaImportSettings settings = GetSettings();
 
             // 1. REL / XNR Stage Layout & Environment Files (.rel, .xnr, .gnr, .znr)
             if (ext is ".rel" or ".xnr" or ".gnr" or ".znr")
@@ -89,7 +137,7 @@ namespace SilentTools
 
                     if (parsedRel != null)
                     {
-                        GameObject relRoot = RelResolver.ResolveRelAsset(parsedRel, relType, assetName, m_Scale, ctx);
+                        GameObject relRoot = RelResolver.ResolveRelAsset(parsedRel, relType, assetName, settings.Scale, ctx);
                         if (relRoot != null)
                         {
                             ctx.AddObjectToAsset("main", relRoot, icon);
@@ -134,7 +182,7 @@ namespace SilentTools
             if (loader.Data == null) return;
 
             // Apply texture overrides if an XNT TextureList exists
-            ApplyTextureOverrides(loader.Data.TextureList);
+            ApplyTextureOverrides(loader.Data.TextureList, settings.TextureRemaps);
 
             // 3. Standalone Motion / Animation Assets (.xnm, .xnv, .gnm, .znm)
             bool isStandaloneMotion = (ext is ".xnm" or ".xnv" or ".gnm" or ".gnv" or ".znm") && loader.Data.Object == null;
@@ -144,11 +192,11 @@ namespace SilentTools
                 NinjaMotion mot = loader.Data.Motion ?? loader.Data.MaterialMotion;
                 if (mot != null)
                 {
-                    string[] targets = (m_NodeHierarchyTarget != null && m_NodeHierarchyTarget.Length > 0)
-                        ? m_NodeHierarchyTarget
+                    string[] targets = (settings.NodeHierarchyTarget != null && settings.NodeHierarchyTarget.Length > 0)
+                        ? settings.NodeHierarchyTarget
                         : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx);
 
-                    AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, assetName, m_Scale, targets, m_MeshImportMode);
+                    AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, assetName, settings.Scale, targets, settings.MeshImportMode);
                     if (clip != null)
                     {
                         ctx.AddObjectToAsset("main", clip, icon);
@@ -169,15 +217,7 @@ namespace SilentTools
                     loader.Data.TextureList,
                     assetName,
                     ctx,
-                    m_Scale,
-                    m_MeshImportMode,
-                    m_ImportMaterials,
-                    m_MaterialLocation,
-                    m_MaterialSearch,
-                    m_MaterialNaming,
-                    m_MaterialSearchPath,
-                    m_TextureSearchPaths,
-                    m_MaterialRemaps,
+                    settings,
                     out nodeTransforms
                 );
             }
@@ -198,7 +238,7 @@ namespace SilentTools
             // 6. Animation Setup & Controller Resolution
             if (rootGO != null)
             {
-                if (m_ImportAnimation)
+                if (settings.ImportAnimation)
                 {
                     NinjaAnimatorResolver.SetupModelAnimations(
                         loader,
@@ -206,9 +246,7 @@ namespace SilentTools
                         nodeTransforms,
                         assetName,
                         ctx.assetPath,
-                        m_Scale,
-                        m_MeshImportMode,
-                        m_GenerateAnimatorController,
+                        settings,
                         ctx
                     );
                 }
@@ -224,11 +262,11 @@ namespace SilentTools
             ctx.SetMainObject(textAsset);
         }
 
-        private void ApplyTextureOverrides(NinjaTextureList texList)
+        private void ApplyTextureOverrides(NinjaTextureList texList, List<TextureRemapEntry> remaps)
         {
-            if (texList?.NinjaTextureFiles == null || m_TextureRemaps == null || m_TextureRemaps.Count == 0) return;
+            if (texList?.NinjaTextureFiles == null || remaps == null || remaps.Count == 0) return;
 
-            foreach (var remap in m_TextureRemaps)
+            foreach (var remap in remaps)
             {
                 if (remap.overrideTexture != null && remap.textureIndex >= 0 && remap.textureIndex < texList.NinjaTextureFiles.Count)
                 {

@@ -120,23 +120,20 @@ namespace SilentTools
             NinjaTextureList texList,
             string modelName,
             UnityEditor.AssetImporters.AssetImportContext ctx,
-            MaterialLocation location,
-            MaterialSearch searchMode,
-            MaterialNaming namingMode,
-            string searchDirectory,
-            string[] textureSearchPaths = null)
+            NinjaImportSettings settings)
         {
+            settings ??= NinjaImportSettings.Default;
             List<Material> materials = new List<Material>();
             Shader stdShader = Shader.Find("NinjaNext/Standard");
             string modelFolderPath = Path.GetDirectoryName(ctx.assetPath).Replace('\\', '/');
-            texList = ResolveTextureList(texList, ctx.assetPath, ctx, textureSearchPaths);
+            texList = ResolveTextureList(texList, ctx.assetPath, ctx, settings.TextureSearchPaths);
 
             // Build prioritized candidate folders (Custom texture paths evaluated in array order)
             List<string> candidateFolders = BuildCandidateFolders(
                 modelFolderPath,
-                searchDirectory,
-                textureSearchPaths,
-                searchMode
+                settings.MaterialSearchPath,
+                settings.TextureSearchPaths,
+                settings.MaterialSearch
             );
 
             for (int i = 0; i < objData.Materials.Count; i++)
@@ -146,19 +143,19 @@ namespace SilentTools
                 var matLogic = objData.MaterialLogics?.Find(l => l.Offset == nMat.MaterialLogicOffset);
                 var texMap = objData.TextureMaps?.Find(t => t.Offset == nMat.MaterialTexMapDescriptionOffset);
 
-                string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, namingMode);
-                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, searchMode, candidateFolders, ctx);
+                string matName = DetermineMaterialName(objData, texMap, texList, modelName, i, settings.MaterialNaming);
+                Material mat = CreateMaterialData(nMat, matColour, matLogic, texMap, texList, i, matName, stdShader, settings.MaterialSearch, candidateFolders, ctx);
 
-                if (location == MaterialLocation.UseExternalMaterials)
+                if (settings.MaterialLocation == MaterialLocation.UseExternalMaterials)
                 {
-                    string foundPath = FindExistingMaterial(matName, candidateFolders, searchMode);
+                    string foundPath = FindExistingMaterial(matName, candidateFolders, settings.MaterialSearch);
                     if (!string.IsNullOrEmpty(foundPath))
                     {
                         Material externalMat = AssetDatabase.LoadAssetAtPath<Material>(foundPath);
                         if (externalMat != null) { materials.Add(externalMat); continue; }
                     }
 
-                    string targetFolder = ResolveTargetFolder(modelFolderPath, searchDirectory);
+                    string targetFolder = ResolveTargetFolder(modelFolderPath, settings.MaterialSearchPath);
                     if (!Directory.Exists(targetFolder)) { Directory.CreateDirectory(targetFolder); AssetDatabase.Refresh(); }
 
                     string newMatPath = $"{targetFolder}/{matName}.mat";

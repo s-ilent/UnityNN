@@ -16,6 +16,7 @@ namespace SilentTools
     {
         private SerializedProperty m_ScaleProp;
         private SerializedProperty m_MeshImportModeProp;
+        private SerializedProperty m_GenerateMeshCollidersProp;
         private SerializedProperty m_ImportMaterialsProp;
         private SerializedProperty m_MaterialLocationProp;
         private SerializedProperty m_MaterialSearchProp;
@@ -40,6 +41,7 @@ namespace SilentTools
             base.OnEnable();
             m_ScaleProp = serializedObject.FindProperty("m_Scale");
             m_MeshImportModeProp = serializedObject.FindProperty("m_MeshImportMode");
+            m_GenerateMeshCollidersProp = serializedObject.FindProperty("m_GenerateMeshColliders");
             m_ImportMaterialsProp = serializedObject.FindProperty("m_ImportMaterials");
             m_MaterialLocationProp = serializedObject.FindProperty("m_MaterialLocation");
             m_MaterialSearchProp = serializedObject.FindProperty("m_MaterialSearch");
@@ -176,6 +178,10 @@ namespace SilentTools
             if (m_MeshImportModeProp != null)
             {
                 EditorGUILayout.PropertyField(m_MeshImportModeProp, new GUIContent("Mesh Import Mode"));
+            }
+            if (m_GenerateMeshCollidersProp != null)
+            {
+                EditorGUILayout.PropertyField(m_GenerateMeshCollidersProp, new GUIContent("Generate Mesh Colliders"));
             }
         }
 

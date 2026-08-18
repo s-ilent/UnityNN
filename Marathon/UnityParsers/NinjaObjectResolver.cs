@@ -14,19 +14,12 @@ namespace SilentTools
             NinjaTextureList texList,
             string assetName,
             UnityEditor.AssetImporters.AssetImportContext ctx,
-            float scale,
-            MeshImportMode importMode,
-            bool importMaterials,
-            MaterialLocation materialLocation,
-            MaterialSearch materialSearch,
-            MaterialNaming materialNaming,
-            string materialSearchPath,
-            string[] textureSearchPaths,
-            List<MaterialRemapEntry> materialRemaps,
+            NinjaImportSettings settings,
             out List<Transform> outNodeTransforms)
         {
             outNodeTransforms = new List<Transform>();
             if (objData == null) return null;
+            settings ??= NinjaImportSettings.Default;
 
             // Resolve bone/node name strings if present in linked .xnn files
             NinjaNodeNameResolver.ResolveNodeNames(objData, null, ctx?.assetPath, ctx, out _);
@@ -40,7 +33,7 @@ namespace SilentTools
                 string nodeName = !string.IsNullOrEmpty(node.Name) ? node.Name : $"Node_{i:0000}";
                 GameObject nodeGO = new GameObject(nodeName);
 
-                Vector3 pos = new Vector3(-node.Translation.x * scale, node.Translation.y * scale, node.Translation.z * scale);
+                Vector3 pos = new Vector3(-node.Translation.x * settings.Scale, node.Translation.y * settings.Scale, node.Translation.z * settings.Scale);
                 Vector3 rot = node.Rotation;
 
                 if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
@@ -59,24 +52,20 @@ namespace SilentTools
                 outNodeTransforms.Add(nodeGO.transform);
             }
 
-            // 2. Resolve Materials (Passing prioritized texture search paths)
-            List<Material> materials = importMaterials
+            // 2. Resolve Materials
+            List<Material> materials = settings.ImportMaterials
                 ? NinjaMaterialResolver.ResolveMaterials(
                     objData,
                     texList,
                     assetName,
                     ctx,
-                    materialLocation,
-                    materialSearch,
-                    materialNaming,
-                    materialSearchPath,
-                    textureSearchPaths)
+                    settings)
                 : new List<Material>();
 
             // Apply Per-Material User Overrides from Inspector Remap Table
-            if (materialRemaps != null)
+            if (settings.MaterialRemaps != null)
             {
-                foreach (var remap in materialRemaps)
+                foreach (var remap in settings.MaterialRemaps)
                 {
                     if (remap.overrideMaterial != null && remap.slotIndex >= 0 && remap.slotIndex < materials.Count)
                     {
@@ -86,17 +75,17 @@ namespace SilentTools
             }
 
             // 3. Dispatch to Mesh Import Mode
-            switch (importMode)
+            switch (settings.MeshImportMode)
             {
                 case MeshImportMode.SingleSkinnedMesh:
-                    BuildSingleSkinnedMesh(objData, rootGO, outNodeTransforms, materials, scale, assetName, ctx);
+                    BuildSingleSkinnedMesh(objData, rootGO, outNodeTransforms, materials, assetName, settings, ctx);
                     break;
                 case MeshImportMode.CombinedByNode:
-                    BuildCombinedNodeMeshes(objData, rootGO, outNodeTransforms, materials, scale, assetName, ctx);
+                    BuildCombinedNodeMeshes(objData, rootGO, outNodeTransforms, materials, assetName, settings, ctx);
                     break;
                 case MeshImportMode.IndividualSubObjects:
                 default:
-                    BuildIndividualSubObjects(objData, rootGO, outNodeTransforms, materials, scale, assetName, ctx);
+                    BuildIndividualSubObjects(objData, rootGO, outNodeTransforms, materials, assetName, settings, ctx);
                     break;
             }
 
@@ -109,8 +98,8 @@ namespace SilentTools
             GameObject rootGO,
             List<Transform> allNodeTransforms,
             List<Material> materials,
-            float scale,
             string assetName,
+            NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             MeshBuffer buffer = new MeshBuffer();
@@ -120,7 +109,7 @@ namespace SilentTools
                 foreach (var meshSet in subObj.MeshSets)
                 {
                     int fallbackNode = (meshSet.NodeIndex >= 0 && meshSet.NodeIndex < allNodeTransforms.Count) ? meshSet.NodeIndex : 0;
-                    buffer.AppendMeshSet(objData, meshSet, scale, null, null, fallbackNode, meshSet.MaterialIndex);
+                    buffer.AppendMeshSet(objData, meshSet, settings.Scale, null, null, fallbackNode, meshSet.MaterialIndex);
                 }
             }
 
@@ -144,6 +133,12 @@ namespace SilentTools
             smr.bones = bones;
             smr.rootBone = bones.Length > 0 ? bones[0] : rootGO.transform;
             smr.sharedMaterials = MapMaterials(buffer.GetSortedSubmeshKeys(), materials);
+
+            if (settings.GenerateMeshColliders)
+            {
+                MeshCollider mc = rootGO.AddComponent<MeshCollider>();
+                mc.sharedMesh = mesh;
+            }
         }
         #endregion
 
@@ -153,8 +148,8 @@ namespace SilentTools
             GameObject rootGO,
             List<Transform> allNodeTransforms,
             List<Material> materials,
-            float scale,
             string assetName,
+            NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             for (int n = 0; n < objData.Nodes.Count; n++)
@@ -190,7 +185,7 @@ namespace SilentTools
                         targetGO.transform.SetParent(nodeTr, false);
                     }
 
-                    BuildNodeMeshSection(objData, rootGO, nodeTr, targetGO, sets, matIdx, n, materials, scale, assetName, ctx);
+                    BuildNodeMeshSection(objData, rootGO, nodeTr, targetGO, sets, matIdx, n, materials, assetName, settings, ctx);
                 }
             }
         }
@@ -204,8 +199,8 @@ namespace SilentTools
             int matIdx,
             int nodeIdx,
             List<Material> materials,
-            float scale,
             string assetName,
+            NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             bool isSkinned = false;
@@ -247,7 +242,7 @@ namespace SilentTools
                 } : (Func<byte, int>)null;
 
                 int fallbackLocal = globalToLocal.TryGetValue(nodeIdx, out int lf) ? lf : 0;
-                buffer.AppendMeshSet(objData, ms, scale, nodeXform, remap, fallbackLocal, 0);
+                buffer.AppendMeshSet(objData, ms, settings.Scale, nodeXform, remap, fallbackLocal, 0);
             }
 
             Mesh mesh = buffer.BuildMesh($"{assetName}_Node_{nodeIdx}_Mat_{matIdx}");
@@ -280,6 +275,12 @@ namespace SilentTools
                 targetGO.AddComponent<MeshFilter>().sharedMesh = mesh;
                 targetGO.AddComponent<MeshRenderer>().sharedMaterial = assignedMat;
             }
+
+            if (settings.GenerateMeshColliders)
+            {
+                MeshCollider mc = targetGO.AddComponent<MeshCollider>();
+                mc.sharedMesh = mesh;
+            }
         }
         #endregion
 
@@ -289,8 +290,8 @@ namespace SilentTools
             GameObject rootGO,
             List<Transform> allNodeTransforms,
             List<Material> materials,
-            float scale,
             string assetName,
+            NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
             int subObjIdx = 0;
@@ -311,7 +312,7 @@ namespace SilentTools
                         ? parentTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix : (Matrix4x4?)null;
 
                     MeshBuffer buffer = new MeshBuffer();
-                    buffer.AppendMeshSet(objData, ms, scale, nodeXform, null, 0, 0);
+                    buffer.AppendMeshSet(objData, ms, settings.Scale, nodeXform, null, 0, 0);
 
                     Mesh mesh = buffer.BuildMesh($"{assetName}_Mesh_{subObjIdx}");
                     if (mesh == null) continue;
@@ -347,6 +348,12 @@ namespace SilentTools
                     {
                         meshGO.AddComponent<MeshFilter>().sharedMesh = mesh;
                         meshGO.AddComponent<MeshRenderer>().sharedMaterial = mat;
+                    }
+
+                    if (settings.GenerateMeshColliders)
+                    {
+                        MeshCollider mc = meshGO.AddComponent<MeshCollider>();
+                        mc.sharedMesh = mesh;
                     }
 
                     subObjIdx++;
