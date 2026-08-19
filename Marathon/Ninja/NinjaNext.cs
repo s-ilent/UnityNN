@@ -1,8 +1,9 @@
 ﻿// File: Marathon/Ninja/NinjaNext.cs
 using UnityEngine;
+using System;
 using System.Collections.Generic;
-using Marathon.IO;
 using System.IO;
+using Marathon.IO;
 
 namespace Marathon.Formats.Mesh.Ninja
 {
@@ -31,6 +32,38 @@ namespace Marathon.Formats.Mesh.Ninja
 
         public FormatData Data { get; set; } = new FormatData();
 
+        private static readonly Dictionary<string, Action<BinaryReaderEx, string, FormatData>> ChunkDispatchTable = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["TL"] = (r, id, d) => { d.TextureList = new NinjaTextureList(); d.TextureList.Read(r); },
+            ["EF"] = (r, id, d) => { d.EffectList = new NinjaEffectList(); d.EffectList.Read(r); },
+            ["NN"] = (r, id, d) => { d.NodeNameList = new NinjaNodeNameList(); d.NodeNameList.Read(r); },
+            ["TN"] = (r, id, d) => { d.NodeNameList = new NinjaNodeNameList(); d.NodeNameList.Read(r); }, // Morph Target Names
+            ["OB"] = (r, id, d) => { d.Object = new NinjaObject(); d.Object.Read(r); },
+            ["LI"] = (r, id, d) => { d.Light = new NinjaLight(); d.Light.Read(r); },
+            ["CA"] = (r, id, d) => { d.Camera = new NinjaCamera(); d.Camera.Read(r); },
+            ["MA"] = ReadMotionChunk,
+            ["MO"] = ReadMotionChunk,
+            ["MC"] = ReadMotionChunk,
+            ["ML"] = ReadMotionChunk,
+            ["MM"] = ReadMotionChunk,
+            ["MV"] = ReadMotionChunk,
+            ["NV"] = ReadMotionChunk
+        };
+
+        private static void ReadMotionChunk(BinaryReaderEx reader, string chunkID, FormatData data)
+        {
+            NinjaMotion motion = new NinjaMotion { ChunkID = chunkID };
+            motion.Read(reader);
+            if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) || chunkID.EndsWith("NV") || chunkID.EndsWith("MV") || chunkID.EndsWith("MA"))
+            {
+                data.MaterialMotion = motion;
+            }
+            else
+            {
+                data.Motion = motion;
+            }
+        }
+
         public override void Load(Stream stream)
         {
             BinaryReaderEx reader = new BinaryReaderEx(stream);
@@ -55,9 +88,7 @@ namespace Marathon.Formats.Mesh.Ninja
                 }
             }
 
-            // -----------------------------------------------------------------
             // Case A: Standalone Bare Chunk (No NXIF container header)
-            // -----------------------------------------------------------------
             if (headerSig != "NXIF" && !headerSig.EndsWith("IF"))
             {
                 reader.JumpTo(0);
@@ -73,14 +104,11 @@ namespace Marathon.Formats.Mesh.Ninja
                     chunkSize = reader.ReadUInt32();
                 }
 
-                // Stream position is at byte 8 of the chunk, ready for chunk parsing
                 ReadChunkPayload(reader, chunkID);
                 return;
             }
 
-            // -----------------------------------------------------------------
             // Case B: Multi-Chunk NXIF Container Header
-            // -----------------------------------------------------------------
             reader.JumpTo(headerStartPos + 4);
             uint chunkSizeNXIF = reader.ReadUInt32();
             uint dataChunkCount = reader.ReadUInt32();
@@ -100,10 +128,8 @@ namespace Marathon.Formats.Mesh.Ninja
             uint NOF0Size = reader.ReadUInt32();
             uint version = reader.ReadUInt32();
 
-            // Set reader offset relative to inner container header start position
             reader.Offset = (uint)(headerStartPos + dataOffset);
 
-            // Read data chunks sequentially
             reader.JumpTo(headerStartPos + dataOffset);
             for (int i = 0; i < dataChunkCount; i++)
             {
@@ -115,10 +141,8 @@ namespace Marathon.Formats.Mesh.Ninja
 
                 long targetPosition = chunkPos + 8 + chunkSize;
 
-                // Stream position is at byte 8 of this chunk, ready for chunk parsing
                 ReadChunkPayload(reader, chunkID);
 
-                // Jump to the start of the next chunk
                 if (targetPosition <= reader.BaseStream.Length)
                 {
                     reader.JumpTo(targetPosition);
@@ -138,68 +162,15 @@ namespace Marathon.Formats.Mesh.Ninja
 
         private void ReadChunkPayload(BinaryReaderEx reader, string chunkID)
         {
-            switch (chunkID)
+            if (string.IsNullOrEmpty(chunkID) || chunkID.Length < 4) return;
+
+            if (chunkID[0] == 'N')
             {
-                // Texture Lists
-                case "NXTL": case "NGTL": case "NZTL": case "NCTL": case "NETL": case "NITL": case "NLTL": case "NSTL": case "NUTL":
-                    Data.TextureList = new NinjaTextureList();
-                    Data.TextureList.Read(reader);
-                    break;
-
-                // Effect Lists
-                case "NXEF": case "NGEF": case "NZEF": case "NCEF": case "NEEF": case "NIEF": case "NLEF": case "NSEF": case "NUEF":
-                    Data.EffectList = new NinjaEffectList();
-                    Data.EffectList.Read(reader);
-                    break;
-
-                // Node Name Lists
-                case "NXNN": case "NGNN": case "NZNN": case "NCNN": case "NENN": case "NINN": case "NLNN": case "NSNN": case "NUNN":
-                    Data.NodeNameList = new NinjaNodeNameList();
-                    Data.NodeNameList.Read(reader);
-                    break;
-
-                // Objects / Meshes
-                case "NXOB": case "NGOB": case "NZOB": case "NCOB": case "NEOB": case "NIOB": case "NLOB": case "NSOB": case "NUOB":
-                    Data.Object = new NinjaObject();
-                    Data.Object.Read(reader);
-                    break;
-
-                // Lights
-                case "NXLI": case "NGLI": case "NZLI": case "NCLI": case "NELI":
-                    Data.Light = new NinjaLight();
-                    Data.Light.Read(reader);
-                    break;
-
-                // Cameras
-                case "NXCA": case "NGCA": case "NZCA": case "NCCA": case "NECA":
-                    Data.Camera = new NinjaCamera();
-                    Data.Camera.Read(reader);
-                    break;
-
-                // Motions / Animations
-                case "NXMA": case "NXMC": case "NXML": case "NXMM": case "NXMO":
-                case "NGMA": case "NGMC": case "NGML": case "NGMM": case "NGMO":
-                case "NZMA": case "NZMC": case "NZML": case "NZMM": case "NZMO":
-                case "NXNV": case "NXMV": case "NGNV": case "NZNV":
-                    NinjaMotion motion = new NinjaMotion();
-                    motion.ChunkID = chunkID;
-                    motion.Read(reader);
-                    if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) || chunkID.EndsWith("NV") || chunkID.EndsWith("MV"))
-                    {
-                        Data.MaterialMotion = motion;
-                    }
-                    else
-                    {
-                        Data.Motion = motion;
-                    }
-                    break;
-
-                // Metadata & Unknown Chunks
-                case "NOF0":
-                case "NFN0":
-                case "NEND":
-                default:
-                    break;
+                string tag = chunkID.Substring(2, 2).ToUpperInvariant();
+                if (ChunkDispatchTable.TryGetValue(tag, out var handler))
+                {
+                    handler(reader, chunkID, Data);
+                }
             }
         }
     }
