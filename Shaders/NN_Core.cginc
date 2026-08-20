@@ -29,10 +29,12 @@ float _HDRIntensity;
 sampler2D _MainTex2;
 float4 _MainTex2_ST;
 float _MainTex2BlendMode; // 0: Off, 1: Multiply, 2: Decal, 3: Replace, 4: Blend, 5: Add, 6: Subtract
+float4 _MainTex2_TexelSize;
 
 sampler2D _MainTex3;
 float4 _MainTex3_ST;
 float _MainTex3BlendMode;
+float4 _MainTex3_TexelSize;
 
 // Matcap
 float _UseMatcap;
@@ -119,9 +121,10 @@ half3 ApplyTextureBlend(half3 baseCol, half4 layerCol, float mode)
     switch (blendMode)
     {
         case 1: return baseCol * layerCol.rgb;                             // Multiply
-        case 2: return lerp(baseCol, layerCol.rgb, layerCol.a);            // Decal / Desert Terrain
+        // case 2: return lerp(baseCol, layerCol.rgb, layerCol.a);            // Decal / Desert Terrain
         case 3: return layerCol.rgb;                                       // Replace
         case 4: return (1.0 - layerCol.a) * baseCol;                       // Inverse Alpha Modulate (SceneC1T2)
+        case 2:
         case 5: return baseCol + layerCol.rgb;                             // Additive (SceneUserMatCallback_Desert)
         case 6: return max(half3(0.0, 0.0, 0.0), baseCol - layerCol.rgb);  // Subtract
         default: return baseCol;
@@ -239,6 +242,19 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
 
     //half4 mainTex = tex2D(_MainTex, i.uv0.xy);
     half4 mainTex = SampleBicubicBSpline(_MainTex, _MainTex_TexelSize, i.uv0.xy);
+    
+    // Multi-Texture Layers (TexMaps)
+    if (_MainTex2BlendMode > 0.5)
+    {
+        half4 tex2 = SampleBicubicBSpline(_MainTex2, _MainTex2_TexelSize, i.uv0.zw);
+        mainTex.rgb = ApplyTextureBlend(mainTex, tex2, _MainTex2BlendMode);
+    }
+    if (_MainTex3BlendMode > 0.5)
+    {
+        half4 tex3 = SampleBicubicBSpline(_MainTex3, _MainTex3_TexelSize, i.uv1.xy);
+        mainTex.rgb = ApplyTextureBlend(mainTex, tex3, _MainTex3BlendMode);
+    }
+    
     half4 vcolor = i.color;
     vcolor.rgb *= _VertexColorScale;
 
@@ -249,30 +265,12 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     float3 gammaBlended = (linearToGamma * vcolor.rgb) / greyLevel;
     float3 gammaToLinear = GammaToLinearSpace(gammaBlended);
 
-    // Doesn't apply since UNITY_HDR_ON is never set. 
-#ifdef UNITY_HDR_ON
-    float4 colorSpaceMult = unity_ColorSpaceDouble;
-#else
-    float4 colorSpaceMult = float4(1.0, 1.0, 1.0, 1.0);
-#endif
-
     float hdrMult = _HDRIntensity * _EmissionPower;
     if (hdrMult <= 0.0) hdrMult = 1.0;
 
     float4 fullColorAlpha = (mainTex * _Color * vcolor);
-    material.baseColor = float4(gammaToLinear * colorSpaceMult.rgb * hdrMult, fullColorAlpha.a);
+    material.baseColor = float4(gammaToLinear * hdrMult, fullColorAlpha.a);
 
-    // 2. Multi-Texture Layers (TexMaps)
-    if (_MainTex2BlendMode > 0.5)
-    {
-        half4 tex2 = tex2D(_MainTex2, i.uv0.zw);
-        material.baseColor.rgb = ApplyTextureBlend(material.baseColor.rgb, tex2, _MainTex2BlendMode);
-    }
-    if (_MainTex3BlendMode > 0.5)
-    {
-        half4 tex3 = tex2D(_MainTex3, i.uv1.xy);
-        material.baseColor.rgb = ApplyTextureBlend(material.baseColor.rgb, tex3, _MainTex3BlendMode);
-    }
 
     // 3. Normal Vector Setup
     float3 N = normalize(i.worldNormal);
@@ -354,15 +352,11 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     float NdotL = max(0.0, dot(shading.normal, L));
     
     half3 baseBrightness = _LightColor0.rgb;
-    // Todo: Apply lighting to meshes with normals, but only apply color to meshes without.
-    // * NdotL * shading.attenuation;
-    // We don't have a good way of telling if a mesh had normals before importing though... 
-    // Could send a material prop with the import data. But REALLY, there should be a material flag
-    // that specifies whether a mesh is "unlit" or "lit" or not. 
-    // I wonder if we could use the diffuse and ambient colour here. Problem is, the ambient colour and 
-    // diffuse colour are always the same in the meshes I've looked at. 
-    // The best choice is probably to fake it. 
-    half3 diffuse = baseBrightness * lerp(0.5, 1.0, min(NdotL, shading.attenuation));
+    // Typically, lighting is _LightColor0.rgb * NdotL * shading.attenuation;
+    // But most environment meshes in PSU are static with baked vertex colours
+    // representing baked lighting, and no normals. Importing them to Unity generates
+    // normaly automatically. Since shadows look pretty good, 
+    half3 diffuse = baseBrightness * min(NdotL, shading.attenuation);
 
     half3 specular = half3(0, 0, 0);
     if (material.smoothness > 0.0)
@@ -393,8 +387,14 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
         if (!noFog) applyUnityFog(finalRGB, fogDepth);
         return half4(finalRGB, material.baseColor.a);
     */    
-        diffuse = baseBrightness;
+        // if (_Mode == 4.0) baseBrightness = length(baseBrightness);
+        diffuse = baseBrightness * lerp(_AmbientColor.rgb, 1.0, min(saturate(NdotL / 0.5), shading.attenuation));
         ambient = 0;
+        
+        if (isForwardAdd)
+        {
+            diffuse *= saturate(shading.attenuation / 0.5);
+        }
     }
     
     if (isForwardAdd)
