@@ -335,9 +335,44 @@ namespace SilentTools
                 }
             }
 
+            bool isNoRepeat = (motionData.Type & MotionType.NND_MOTIONTYPE_NOREPEAT) != 0 || 
+                              (motionData.Type & MotionType.NND_MOTIONTYPE_TRIGGER) != 0;
+
+            bool hasExplicitRepeat = (motionData.Type & (MotionType.NND_MOTIONTYPE_CONSTREPEAT | 
+                                                         MotionType.NND_MOTIONTYPE_REPEAT | 
+                                                         MotionType.NND_MOTIONTYPE_MIRROR | 
+                                                         MotionType.NND_MOTIONTYPE_OFFSET)) != 0;
+
+            if (!hasExplicitRepeat && motionData.SubMotions != null)
+            {
+                foreach (var sm in motionData.SubMotions)
+                {
+                    if (sm == null) continue;
+
+                    if ((sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT | 
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT | 
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_MIRROR | 
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_OFFSET)) != 0)
+                    {
+                        hasExplicitRepeat = true;
+                        break;
+                    }
+
+                    if ((sm.InterpolationType & SubMotionInterpolationType.NND_SMOTIPTYPE_NOREPEAT) != 0 || 
+                        (sm.InterpolationType & SubMotionInterpolationType.NND_SMOTIPTYPE_TRIGGER) != 0)
+                    {
+                        isNoRepeat = true;
+                    }
+                }
+            }
+
+            bool shouldLoop = hasExplicitRepeat || !isNoRepeat;
+
+            clip.wrapMode = shouldLoop ? WrapMode.Loop : WrapMode.Once;
+
             var settings = AnimationUtility.GetAnimationClipSettings(clip);
-            settings.loopTime = motionData.Type.HasFlag(MotionType.NND_MOTIONTYPE_CONSTREPEAT) || motionData.Type.HasFlag(MotionType.NND_MOTIONTYPE_REPEAT);
-            settings.loopBlend = motionData.Type.HasFlag(MotionType.NND_MOTIONTYPE_REPEAT);
+            settings.loopTime = shouldLoop;
+            settings.loopBlend = shouldLoop;
             AnimationUtility.SetAnimationClipSettings(clip, settings);
 
             return clip;
