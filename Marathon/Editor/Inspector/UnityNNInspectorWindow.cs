@@ -1,3 +1,4 @@
+// File: Marathon/Editor/Inspector/UnityNNInspectorWindow.cs
 using UnityEngine;
 using UnityEditor;
 using System.IO;
@@ -21,6 +22,7 @@ namespace SilentTools.Editor
         public NinjaNext NinjaData { get; set; }
         public object RelData { get; set; }
         public RelFileType RelType { get; set; } = RelFileType.Unknown;
+        public Marathon.Formats.Particle.ParticleEffectFile ParticleEffectData { get; set; }
 
         public ChunkSourceInfo ObjectSource { get; set; } = new ChunkSourceInfo();
         public ChunkSourceInfo NodeMotionSource { get; set; } = new ChunkSourceInfo();
@@ -31,6 +33,7 @@ namespace SilentTools.Editor
 
         public bool IsNinjaAsset => NinjaData != null && NinjaData.Data != null;
         public bool IsRelAsset => RelData != null;
+        public bool IsParticleAsset => ParticleEffectData != null && ParticleEffectData.IsValid;
     }
 
     public partial class UnityNNInspectorWindow : EditorWindow
@@ -61,6 +64,12 @@ namespace SilentTools.Editor
             "Environment & Fog",
             "Enemy Spawns",
             "Quest Listing"
+        };
+        
+        private readonly string[] m_ParticleTabNames = new string[] {
+            "Generators & Emitters",
+            "TYPD Simulation Parameters",
+            "Sequence Timeline Cues"
         };
 
         private string m_DumpedJsonText = "";
@@ -263,6 +272,25 @@ namespace SilentTools.Editor
                     Debug.LogWarning($"Could not load REL/XNR asset {path}:\n{ex}");
                 }
             }
+            else if (ext == ".dat")
+            {
+                try
+                {
+                    using (FileStream fs = File.OpenRead(path))
+                    {
+                        var pFile = new Marathon.Formats.Particle.ParticleEffectFile();
+                        pFile.Load(fs);
+                        if (pFile.IsValid)
+                        {
+                            m_Context.ParticleEffectData = pFile;
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"Could not load Particle Effect asset {path}:\n{ex}");
+                }
+            }
 
             EnsureActiveTab();
         }
@@ -306,9 +334,9 @@ namespace SilentTools.Editor
                 LoadSelectedAsset();
             }
 
-            if (!m_Context.IsNinjaAsset && !m_Context.IsRelAsset)
+            if (!m_Context.IsNinjaAsset && !m_Context.IsRelAsset && !m_Context.IsParticleAsset)
             {
-                EditorGUILayout.HelpBox("Select a Ninja asset (.xno, .xna, .xnj, .xnm, .xnt, etc.), REL file (.rel, .xnr), or a GameObject in the scene hierarchy.", MessageType.Info);
+                EditorGUILayout.HelpBox("Select a Ninja asset (.xno, .xna, .xnj, .xnm, .xnt, etc.), REL file (.rel, .xnr), particle effect (.dat), or a GameObject in the scene hierarchy.", MessageType.Info);
                 return;
             }
 
@@ -338,6 +366,10 @@ namespace SilentTools.Editor
             else if (m_Context.IsRelAsset)
             {
                 DrawRelTab();
+            }
+            else if (m_Context.IsParticleAsset)
+            {
+                DrawParticleTab();
             }
 
             if (m_ShowJsonOutput && !string.IsNullOrEmpty(m_DumpedJsonText))
@@ -391,13 +423,23 @@ namespace SilentTools.Editor
                 flags[3] = m_Context.RelData is List<QuestListingData>;
                 return flags;
             }
+            
+            if (m_Context.IsParticleAsset)
+            {
+                var pData = m_Context.ParticleEffectData;
+                return new bool[] {
+                    pData.Emitters != null && pData.Emitters.Count > 0,
+                    pData.Behaviors != null && pData.Behaviors.Count > 0,
+                    pData.SequenceCues != null && pData.SequenceCues.Count > 0
+                };
+            }
 
             return new bool[0];
         }
 
         private void DrawDynamicTabToolbar()
         {
-            string[] tabNames = m_Context.IsNinjaAsset ? m_NinjaTabNames : (m_Context.IsRelAsset ? m_RelTabNames : new string[0]);
+            string[] tabNames = m_Context.IsNinjaAsset ? m_NinjaTabNames : (m_Context.IsRelAsset ? m_RelTabNames : (m_Context.IsParticleAsset ? m_ParticleTabNames : new string[0]));
             bool[] activeFlags = GetCurrentTabAvailabilityFlags();
 
             EditorGUILayout.BeginHorizontal();

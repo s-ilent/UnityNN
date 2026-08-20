@@ -8,6 +8,7 @@ using System.IO;
 using System.Text;
 using Marathon.Formats.Mesh.Ninja;
 using Marathon.Formats.Archive;
+using Marathon.Formats.Particle;
 
 namespace SilentTools
 {
@@ -73,7 +74,9 @@ namespace SilentTools
         // GameCube / Wii formats
         "gno", "gna", "gnj", "gnm", "gnv", "gnt", "gnn", "gnc", "gnl", "gnr", "gbl",
         // PS2 / PSP formats
-        "zno", "znm", "znt", "znn", "znr", "zbl"
+        "zno", "znm", "znt", "znn", "znr", "zbl",
+        // PSU particle format. Might be generic?
+        "dat"
     })]
     public class NinjaNextImporter : ScriptedImporter
     {
@@ -125,6 +128,27 @@ namespace SilentTools
             string assetName = Path.GetFileNameWithoutExtension(ctx.assetPath);
             Texture2D icon = NinjaIconResolver.GetIconForExtension(ext);
             NinjaImportSettings settings = GetSettings();
+            
+            // Particle Effect Format (.dat / YPD0) -> Marathon.Formats.Particle
+            if (ext == ".dat")
+            {
+                using (FileStream fs = File.OpenRead(ctx.assetPath))
+                {
+                    ParticleEffectFile particleFile = new ParticleEffectFile();
+                    particleFile.Load(fs);
+    
+                    if (particleFile.Emitters.Count > 0 || particleFile.Behaviors.Count > 0 || particleFile.ResourceFiles.Count > 0)
+                    {
+                        GameObject effectRoot = ParticleEffectResolver.ResolveParticleEffect(particleFile, assetName, settings.Scale, ctx, settings);
+                        if (effectRoot != null)
+                        {
+                            ctx.AddObjectToAsset("main", effectRoot, icon);
+                            ctx.SetMainObject(effectRoot);
+                            return;
+                        }
+                    }
+                }
+            }
 
             // 1. REL / XNR Stage Layout & Environment Files (.rel, .xnr, .gnr, .znr)
             if (ext is ".rel" or ".xnr" or ".gnr" or ".znr")

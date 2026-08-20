@@ -148,6 +148,18 @@ namespace SilentTools.Editor
                     DrawMetricRow("Particle Presets", $"{partData.Entries.Count}");
                 }
             }
+            
+            if (m_Context.IsParticleAsset)
+            {
+                var pData = m_Context.ParticleEffectData;
+                DrawMetricRow("Asset Type", "Particle Effect (.dat)");
+                DrawMetricRow("Engine Type ID", $"{pData.ParticleType}");
+                DrawMetricRow("Emitters", $"{pData.Emitters.Count}");
+                DrawMetricRow("TYPD Blocks", $"{pData.Behaviors.Count}");
+                DrawMetricRow("Timeline Cues", $"{pData.SequenceCues.Count}");
+                DrawMetricRow("Resources", $"{pData.ResourceFiles.Count}");
+                DrawMetricRow("External Bones", $"{pData.ExternalBones.Count}");
+            }
 
             EditorGUILayout.Space(6);
             if (GUILayout.Button("Dump Category JSON", GUILayout.Height(26)))
@@ -217,6 +229,17 @@ namespace SilentTools.Editor
             else if (m_Context.IsRelAsset)
             {
                 DumpCategoryJson(m_Context.RelData);
+            }
+            else if (m_Context.IsParticleAsset)
+            {
+                var pData = m_Context.ParticleEffectData;
+                switch (m_SelectedTab)
+                {
+                    case 0: DumpCategoryJson(pData.Emitters); break;
+                    case 1: DumpCategoryJson(pData.Behaviors); break;
+                    case 2: DumpCategoryJson(pData.SequenceCues); break;
+                    default: DumpCategoryJson(pData); break;
+                }
             }
         }
 

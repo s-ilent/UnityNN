@@ -99,7 +99,8 @@ namespace SilentTools
             ".xnm" or ".gnm" or ".znm" or ".xnv" or ".gnv" => "d_AnimationClip Icon",
             ".xnt" or ".gnt" or ".znt"                     => "d_Texture2D Icon",
             ".xnn" or ".gnn" or ".znn"                     => "d_TextAsset Icon",
-            ".rel"                                         => "d_Assembly Icon",
+            ".rel" or ".xnr" or ".gnr" or ".znr"           => "d_Assembly Icon",
+            ".dat"                                         => "d_ParticleSystem Icon",
             ".xnc" or ".gnc"                               => "d_Camera Icon",
             ".xnl" or ".gnl"                               => "d_Light Icon",
             _                                              => "d_DefaultAsset Icon"

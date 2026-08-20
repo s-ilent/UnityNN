@@ -1,4 +1,4 @@
-// File: Marathon/UnityParsers/XvrDecoder.cs
+// File: Marathon/Formats/XvrDecoder.cs
 using System;
 using UnityEngine;
 
@@ -6,6 +6,16 @@ namespace SilentTools
 {
     public static class XvrDecoder
     {
+        public static Texture2D DecodeXvrFile(byte[] fileBytes)
+        {
+            if (fileBytes == null || fileBytes.Length < 0x20) return null;
+
+            byte[] header = new byte[0x20];
+            Array.Copy(fileBytes, 0, header, 0, 0x20);
+
+            return DecodeXvrToTexture2D(header, fileBytes);
+        }
+
         public static Texture2D DecodeXvrToTexture2D(byte[] header, byte[] rawData)
         {
             if (header == null || header.Length < 0x20 || rawData == null) return null;

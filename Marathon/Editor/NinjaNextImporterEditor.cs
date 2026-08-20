@@ -7,6 +7,7 @@ using System.IO;
 using System.Collections.Generic;
 using Marathon.Formats.Mesh.Ninja;
 using Marathon.Formats.Archive;
+using Marathon.Formats.Particle;
 
 namespace SilentTools
 {
@@ -30,6 +31,7 @@ namespace SilentTools
         private SerializedProperty m_NodeHierarchyTargetProp;
 
         private NinjaNext m_PreviewData;
+        private ParticleEffectFile m_PreviewParticleData;
         private string m_LastLoadedPath = "";
         private int m_SelectedTab = 0;
         private bool m_CanGenerateController = true;
@@ -65,6 +67,7 @@ namespace SilentTools
 
             m_LastLoadedPath = assetPath;
             m_PreviewData = new NinjaNext();
+            m_PreviewParticleData = null;
 
             try
             {
@@ -75,6 +78,14 @@ namespace SilentTools
                     {
                         NblArchive nbl = NblArchive.Load(fs);
                         m_PreviewData.Data = nbl.ToFormatData();
+                    }
+                }
+                else if (ext is ".dat")
+                {
+                    using (FileStream fs = File.OpenRead(assetPath))
+                    {
+                        m_PreviewParticleData = new ParticleEffectFile();
+                        m_PreviewParticleData.Load(fs);
                     }
                 }
                 else if (ext is not (".rel" or ".xnr" or ".gnr" or ".znr"))
@@ -92,6 +103,7 @@ namespace SilentTools
             catch
             {
                 m_PreviewData = null;
+                m_PreviewParticleData = null;
                 m_CanGenerateController = true;
             }
         }
@@ -111,6 +123,7 @@ namespace SilentTools
             bool isModelAsset = ext is ".xno" or ".xna" or ".xnj" or ".gno" or ".zno" || (m_PreviewData?.Data?.Object != null);
             bool isMotionAsset = ext is ".xnm" or ".xnv" or ".gnm" or ".znm" || (m_PreviewData?.Data?.Motion != null || m_PreviewData?.Data?.MaterialMotion != null);
             bool isTexturePackage = ext is ".xnt" or ".gnt" or ".znt" || (m_PreviewData?.Data?.TextureList != null && !isModelAsset);
+            bool isParticleAsset = ext is ".dat" || (m_PreviewParticleData != null && m_PreviewParticleData.IsValid);
             bool isRelAsset = ext is ".rel" or ".xnr" or ".gnr" or ".znr";
             bool isArchive = ext is ".nbl" or ".gbl" or ".zbl";
 
@@ -128,7 +141,7 @@ namespace SilentTools
             }
 
             // Top File Contents Overview Card
-            DrawFileContentsOverview(ext, isModelAsset, isMotionAsset, isTexturePackage, isRelAsset);
+            DrawFileContentsOverview(ext, isModelAsset, isMotionAsset, isTexturePackage, isRelAsset, isParticleAsset);
             EditorGUILayout.Space(4);
 
             // Context-Aware Tab Toolbar
@@ -136,6 +149,7 @@ namespace SilentTools
             if (isModelAsset) { tabs.Add("Model"); tabs.Add("Materials"); }
             if (isModelAsset || isMotionAsset) { tabs.Add("Animation"); }
             if (isTexturePackage || (isModelAsset && m_PreviewData?.Data?.TextureList != null)) { tabs.Add("Textures"); }
+            if (isParticleAsset) { tabs.Add("Particles"); tabs.Add("Textures"); }
             if (isRelAsset) { tabs.Add("Stage / Layout"); }
 
             if (tabs.Count > 1)
@@ -158,7 +172,11 @@ namespace SilentTools
                     DrawAnimationTab();
                     break;
                 case "Textures":
-                    DrawTexturesTab();
+                    if (isParticleAsset) DrawParticleTexturesTab();
+                    else DrawTexturesTab();
+                    break;
+                case "Particles":
+                    DrawParticlesTab();
                     break;
                 case "Stage / Layout":
                 default:
@@ -171,6 +189,28 @@ namespace SilentTools
         }
 
         #region Tab Drawers
+        private void DrawParticlesTab()
+        {
+            EditorGUILayout.LabelField("Particle System Import Settings", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(m_ScaleProp, new GUIContent("Scale Factor"));
+
+            if (m_PreviewParticleData != null && m_PreviewParticleData.IsValid)
+            {
+                EditorGUILayout.Space(4);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("Particle Engine Metadata", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField($"• Particle Type ID: {m_PreviewParticleData.ParticleType}");
+                EditorGUILayout.LabelField($"• Emitters / Generators: {m_PreviewParticleData.Emitters.Count}");
+                EditorGUILayout.LabelField($"• TYPD Simulation Blocks: {m_PreviewParticleData.Behaviors.Count}");
+                EditorGUILayout.LabelField($"• Timeline Sequence Cues: {m_PreviewParticleData.SequenceCues.Count}");
+                if (m_PreviewParticleData.ExternalBones.Count > 0)
+                {
+                    EditorGUILayout.LabelField($"• External Bones: {string.Join(", ", m_PreviewParticleData.ExternalBones)}");
+                }
+                EditorGUILayout.EndVertical();
+            }
+        }
+
         private void DrawModelTab()
         {
             EditorGUILayout.LabelField("Mesh & Hierarchy Settings", EditorStyles.boldLabel);
@@ -223,9 +263,7 @@ namespace SilentTools
                     EditorGUILayout.Space(2);
                 }
 
-                // FBX-Style Per-Material Remap Table (Non-mutating)
                 DrawMaterialRemapTable();
-
                 EditorGUI.indentLevel--;
             }
         }
@@ -333,7 +371,6 @@ namespace SilentTools
                     }
                     else
                     {
-                        // User cleared override -> remove entry
                         if (remapIdx >= 0)
                         {
                             m_MaterialRemapsProp.DeleteArrayElementAtIndex(remapIdx);
@@ -408,7 +445,66 @@ namespace SilentTools
                     }
                     else
                     {
-                        // User cleared override -> remove entry
+                        if (remapIdx >= 0)
+                        {
+                            m_TextureRemapsProp.DeleteArrayElementAtIndex(remapIdx);
+                        }
+                    }
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+        }
+
+        private void DrawParticleTexturesTab()
+        {
+            DrawTextureSearchPathsList();
+            EditorGUILayout.Space(6);
+
+            var resList = m_PreviewParticleData?.ResourceFiles;
+            if (resList == null || resList.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No referenced texture resource files in this particle effect.", MessageType.Info);
+                return;
+            }
+
+            EditorGUILayout.LabelField($"Particle Resource Textures ({resList.Count} Files)", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox("Override referenced particle textures with custom Unity Texture assets.", MessageType.None);
+
+            for (int i = 0; i < resList.Count; i++)
+            {
+                int remapIdx = FindTextureRemapIndex(i);
+                Texture2D currentOverride = null;
+                if (remapIdx >= 0)
+                {
+                    currentOverride = (Texture2D)m_TextureRemapsProp.GetArrayElementAtIndex(remapIdx).FindPropertyRelative("overrideTexture").objectReferenceValue;
+                }
+
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField($"[{i:00}] {resList[i]}", GUILayout.Width(180));
+
+                EditorGUI.BeginChangeCheck();
+                Texture2D newOverride = (Texture2D)EditorGUILayout.ObjectField(currentOverride, typeof(Texture2D), false);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    if (newOverride != null)
+                    {
+                        if (remapIdx >= 0)
+                        {
+                            var elem = m_TextureRemapsProp.GetArrayElementAtIndex(remapIdx);
+                            elem.FindPropertyRelative("overrideTexture").objectReferenceValue = newOverride;
+                        }
+                        else
+                        {
+                            int newIndex = m_TextureRemapsProp.arraySize;
+                            m_TextureRemapsProp.InsertArrayElementAtIndex(newIndex);
+                            var elem = m_TextureRemapsProp.GetArrayElementAtIndex(newIndex);
+                            elem.FindPropertyRelative("textureIndex").intValue = i;
+                            elem.FindPropertyRelative("originalFileName").stringValue = resList[i];
+                            elem.FindPropertyRelative("overrideTexture").objectReferenceValue = newOverride;
+                        }
+                    }
+                    else
+                    {
                         if (remapIdx >= 0)
                         {
                             m_TextureRemapsProp.DeleteArrayElementAtIndex(remapIdx);
@@ -457,7 +553,7 @@ namespace SilentTools
         #endregion
 
         #region Overview Card
-        private void DrawFileContentsOverview(string ext, bool isModel, bool isMotion, bool isTex, bool isRel)
+        private void DrawFileContentsOverview(string ext, bool isModel, bool isMotion, bool isTex, bool isRel, bool isParticle)
         {
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.LabelField("File Contents & Format Summary", EditorStyles.boldLabel);
@@ -480,6 +576,10 @@ namespace SilentTools
             if (m_PreviewData?.Data?.TextureList != null)
             {
                 EditorGUILayout.LabelField($"• Texture Package (XNT): {m_PreviewData.Data.TextureList.NinjaTextureFiles.Count} texture definitions");
+            }
+            if (isParticle && m_PreviewParticleData != null && m_PreviewParticleData.IsValid)
+            {
+                EditorGUILayout.LabelField($"• Particle Effect (YPD0): {m_PreviewParticleData.Emitters.Count} emitters, {m_PreviewParticleData.Behaviors.Count} TYPD blocks, {m_PreviewParticleData.SequenceCues.Count} timeline cues");
             }
             if (isRel)
             {
