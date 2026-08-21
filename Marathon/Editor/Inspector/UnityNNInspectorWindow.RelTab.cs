@@ -1,3 +1,4 @@
+// File: Marathon/Editor/Inspector/UnityNNInspectorWindow.RelTab.cs
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -78,11 +79,109 @@ namespace SilentTools.Editor
             }
             else if (parsedData is LndEffectData effect)
             {
-                EditorGUILayout.LabelField("Environment & Lighting", EditorStyles.boldLabel);
-                EditorGUILayout.LabelField($"Fog Range: {effect.Fog.NearPlane:F1}m - {effect.Fog.FarPlane:F1}m");
-                EditorGUILayout.ColorField("Fog Color", effect.Fog.FogColor);
-                EditorGUILayout.ColorField("Ambient Light", effect.PlayerLightAmbient.LightColor);
-                EditorGUILayout.ColorField("Player Light 1", effect.PlayerLight1.LightColor);
+                EditorGUILayout.LabelField("Environment, Fog & Lighting (LndEffect)", EditorStyles.boldLabel);
+
+                // 1. Fog
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("Fog Parameters:", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField($"  Near Plane: {effect.Fog.NearPlane:F4}");
+                EditorGUILayout.LabelField($"  Far Plane: {effect.Fog.FarPlane:F4}");
+                EditorGUILayout.LabelField($"  Initial Intensity: {effect.Fog.InitialIntensity:F4}");
+                EditorGUILayout.LabelField($"  Ramp Up: {effect.Fog.RampUp:F4}");
+                EditorGUILayout.ColorField("  Fog Color", effect.Fog.FogColor);
+                EditorGUILayout.EndVertical();
+
+                // 2. Lights
+                EditorGUILayout.Space(2);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("Light Definitions:", EditorStyles.boldLabel);
+                if (effect.PlayerLight1 != null)
+                {
+                    EditorGUILayout.LabelField("  Player Light 1:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.Vector3Field("    Direction", effect.PlayerLight1.Direction);
+                    EditorGUILayout.ColorField("    Light Color", effect.PlayerLight1.LightColor);
+                }
+                if (effect.PlayerLight2 != null)
+                {
+                    EditorGUILayout.LabelField("  Player Light 2:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.Vector3Field("    Direction", effect.PlayerLight2.Direction);
+                    EditorGUILayout.ColorField("    Light Color", effect.PlayerLight2.LightColor);
+                }
+                if (effect.PlayerLightAmbient != null)
+                {
+                    EditorGUILayout.LabelField("  Player Light Ambient:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.Vector3Field("    Direction", effect.PlayerLightAmbient.Direction);
+                    EditorGUILayout.ColorField("    Light Color", effect.PlayerLightAmbient.LightColor);
+                }
+                EditorGUILayout.EndVertical();
+
+                // 3. Sun
+                EditorGUILayout.Space(2);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("Sun Parameters:", EditorStyles.boldLabel);
+                EditorGUILayout.Vector3Field("  Sun Position", effect.SunPosition);
+                EditorGUILayout.LabelField($"  Sun Unknown: {effect.SunUnknown:F4}");
+                EditorGUILayout.EndVertical();
+
+                // 4. Gradients
+                EditorGUILayout.Space(2);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("Gradient Definitions:", EditorStyles.boldLabel);
+                if (effect.TopGradient != null)
+                {
+                    EditorGUILayout.LabelField("  Top Gradient:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.LabelField($"    Start Height: {effect.TopGradient.StartHeight:F4}");
+                    EditorGUILayout.LabelField($"    End Height: {effect.TopGradient.EndHeight:F4}");
+                    EditorGUILayout.ColorField("    Start Color", effect.TopGradient.StartColor);
+                    EditorGUILayout.ColorField("    End Color", effect.TopGradient.EndColor);
+                    EditorGUILayout.LabelField($"    Gradient Multiplier: {effect.TopGradient.GradientMultiplier:F4}");
+                    EditorGUILayout.LabelField($"    Destination Multiplier: {effect.TopGradient.DestinationMultiplier:F4}");
+                }
+                if (effect.BottomGradient != null)
+                {
+                    EditorGUILayout.Space(2);
+                    EditorGUILayout.LabelField("  Bottom Gradient:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.LabelField($"    Start Height: {effect.BottomGradient.StartHeight:F4}");
+                    EditorGUILayout.LabelField($"    End Height: {effect.BottomGradient.EndHeight:F4}");
+                    EditorGUILayout.ColorField("    Start Color", effect.BottomGradient.StartColor);
+                    EditorGUILayout.ColorField("    End Color", effect.BottomGradient.EndColor);
+                    EditorGUILayout.LabelField($"    Gradient Multiplier: {effect.BottomGradient.GradientMultiplier:F4}");
+                    EditorGUILayout.LabelField($"    Destination Multiplier: {effect.BottomGradient.DestinationMultiplier:F4}");
+                }
+                EditorGUILayout.EndVertical();
+
+                // 5. Blur
+                EditorGUILayout.Space(2);
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.LabelField("Blur Parameters:", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField($"  Blur Start Distance: {effect.BlurStartDistance:F4}");
+                EditorGUILayout.LabelField($"  Blur Unknown: {effect.BlurUnknown:F4}");
+                EditorGUILayout.LabelField($"  Blur Pixel Count: {effect.BlurPixelCount}");
+                EditorGUILayout.LabelField($"  Blur Distance: {effect.BlurDistance:F4}");
+                EditorGUILayout.LabelField($"  Blur Opacity: {effect.BlurOpacity:F4}");
+                EditorGUILayout.EndVertical();
+            }
+            else if (parsedData is LndEnemyLightData enemyLight)
+            {
+                EditorGUILayout.LabelField("Enemy Light Definitions (LndEnemyLight)", EditorStyles.boldLabel);
+                if (enemyLight.Light1 != null)
+                {
+                    EditorGUILayout.LabelField("  Light 1:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.Vector3Field("    Direction", enemyLight.Light1.Direction);
+                    EditorGUILayout.ColorField("    Light Color", enemyLight.Light1.LightColor);
+                }
+                if (enemyLight.Light2 != null)
+                {
+                    EditorGUILayout.LabelField("  Light 2:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.Vector3Field("    Direction", enemyLight.Light2.Direction);
+                    EditorGUILayout.ColorField("    Light Color", enemyLight.Light2.LightColor);
+                }
+                if (enemyLight.LightAmbient != null)
+                {
+                    EditorGUILayout.LabelField("  Light Ambient:", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.Vector3Field("    Direction", enemyLight.LightAmbient.Direction);
+                    EditorGUILayout.ColorField("    Light Color", enemyLight.LightAmbient.LightColor);
+                }
             }
             else if (parsedData is List<LndFogData> fogs)
             {
@@ -90,15 +189,22 @@ namespace SilentTools.Editor
                 for (int i = 0; i < fogs.Count; i++)
                 {
                     var fog = fogs[i];
-                    EditorGUILayout.LabelField($"  Fog [{i}]: Range {fog.NearPlane:F1}m - {fog.FarPlane:F1}m | Color: {fog.FogColor}");
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                    EditorGUILayout.LabelField($"  Fog Preset [{i:00}]", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.LabelField($"    Near Plane: {fog.NearPlane:F4}");
+                    EditorGUILayout.LabelField($"    Far Plane: {fog.FarPlane:F4}");
+                    EditorGUILayout.LabelField($"    Initial Intensity: {fog.InitialIntensity:F4}");
+                    EditorGUILayout.LabelField($"    Ramp Up: {fog.RampUp:F4}");
+                    EditorGUILayout.ColorField("    Fog Color", fog.FogColor);
+                    EditorGUILayout.EndVertical();
                 }
             }
             else if (parsedData is LndCommonData common)
             {
                 EditorGUILayout.LabelField("Map Scene Links (LndCommon)", EditorStyles.boldLabel);
-                EditorGUILayout.LabelField($"  Linked NBL Filename Fragment: {common.NblFilenameFragment}");
-                EditorGUILayout.LabelField($"  Linked XNT Fragment 1: {common.XntFilenameFragment1}");
-                EditorGUILayout.LabelField($"  Linked XNT Fragment 2: {common.XntFilenameFragment2}");
+                EditorGUILayout.LabelField($"  NBL Filename Fragment: {common.NblFilenameFragment}");
+                EditorGUILayout.LabelField($"  XNT Filename Fragment 1: {common.XntFilenameFragment1}");
+                EditorGUILayout.LabelField($"  XNT Filename Fragment 2: {common.XntFilenameFragment2}");
                 EditorGUILayout.LabelField($"  Unknown Float: {common.UnknownFloat}");
             }
             else if (parsedData is EnemyLayoutData enemyLayout)

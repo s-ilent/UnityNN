@@ -168,31 +168,35 @@ namespace SilentTools
         public Vector3? BoundingBoxMax { get; set; }
     }
 
+    [System.Serializable]
     public class LndLightData
     {
-        public Vector3 Direction { get; set; }
-        public Color LightColor { get; set; } = Color.white;
+        public Vector3 Direction;
+        public Color LightColor = Color.white;
     }
 
+    [System.Serializable]
     public class LndGradientData
     {
-        public float StartHeight { get; set; }
-        public float EndHeight { get; set; }
-        public Color StartColor { get; set; }
-        public Color EndColor { get; set; }
-        public float GradientMultiplier { get; set; }
-        public float DestinationMultiplier { get; set; }
+        public float StartHeight;
+        public float EndHeight;
+        public Color StartColor = Color.white;
+        public Color EndColor = Color.gray;
+        public float GradientMultiplier = 1.0f;
+        public float DestinationMultiplier = 1.0f;
     }
 
+    [System.Serializable]
     public class LndFogData
     {
-        public float NearPlane { get; set; }
-        public float FarPlane { get; set; }
-        public float InitialIntensity { get; set; }
-        public float RampUp { get; set; }
-        public Color FogColor { get; set; } = Color.gray;
+        public float NearPlane;
+        public float FarPlane = 1000.0f;
+        public float InitialIntensity = 1.0f;
+        public float RampUp;
+        public Color FogColor = Color.gray;
     }
 
+    [System.Serializable]
     public class LndEffectData
     {
         public LndLightData PlayerLight1 { get; set; } = new LndLightData();
@@ -212,6 +216,7 @@ namespace SilentTools
         public float BlurOpacity { get; set; }
     }
 
+    [System.Serializable]
     public class LndEnemyLightData
     {
         public LndLightData Light1 { get; set; } = new LndLightData();

@@ -639,9 +639,16 @@ namespace SilentTools
             env.topGradient = data.TopGradient ?? new LndGradientData();
             env.bottomGradient = data.BottomGradient ?? new LndGradientData();
             env.sunPosition = data.SunPosition;
+            env.sunUnknown = data.SunUnknown;
+            env.blurStartDistance = data.BlurStartDistance;
+            env.blurDistance = data.BlurDistance;
+            env.blurPixelCount = data.BlurPixelCount;
+            env.blurOpacity = data.BlurOpacity;
+            env.blurUnknown = data.BlurUnknown;
 
             if (data.PlayerLight1 != null) CreateLightGO("Player Light 1", data.PlayerLight1, rootGO.transform);
             if (data.PlayerLight2 != null) CreateLightGO("Player Light 2", data.PlayerLight2, rootGO.transform);
+            if (data.PlayerLightAmbient != null) CreateLightGO("Player Light Ambient", data.PlayerLightAmbient, rootGO.transform);
 
             if (data.SunPosition != Vector3.zero)
             {
@@ -649,6 +656,7 @@ namespace SilentTools
                 Light l = sun.AddComponent<Light>();
                 l.type = UnityEngine.LightType.Directional;
                 l.color = Color.white;
+                l.intensity = data.SunUnknown > 0 ? data.SunUnknown : 1.0f;
                 sun.transform.forward = -data.SunPosition.normalized;
             }
         }

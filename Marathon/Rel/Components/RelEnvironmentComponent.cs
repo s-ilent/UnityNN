@@ -1,3 +1,4 @@
+// File: Marathon/Rel/Components/RelEnvironmentComponent.cs
 using UnityEngine;
 
 namespace SilentTools
@@ -5,13 +6,28 @@ namespace SilentTools
     [DisallowMultipleComponent]
     public class RelEnvironmentComponent : MonoBehaviour
     {
+        [Header("Distance & Atmosphere Fog")]
         public LndFogData fog = new LndFogData();
+
+        [Header("Player & Ambient Lighting")]
         public LndLightData playerLight1 = new LndLightData();
         public LndLightData playerLight2 = new LndLightData();
         public LndLightData playerLightAmbient = new LndLightData();
+
+        [Header("Atmosphere Height Gradients")]
         public LndGradientData topGradient = new LndGradientData();
         public LndGradientData bottomGradient = new LndGradientData();
+
+        [Header("Sun & Celestial Lighting")]
         public Vector3 sunPosition;
+        public float sunUnknown;
+
+        [Header("Depth / Screen Blur Post-Processing")]
+        public float blurStartDistance;
+        public float blurDistance;
+        public int blurPixelCount;
+        public float blurOpacity;
+        public float blurUnknown;
 
         [ContextMenu("Apply Environment To Unity Scene")]
         public void ApplyEnvironmentToScene()
@@ -24,11 +40,22 @@ namespace SilentTools
                 RenderSettings.fogEndDistance = fog.FarPlane;
                 RenderSettings.fogColor = fog.FogColor;
             }
-            if (playerLightAmbient != null)
+
+            if (topGradient != null && bottomGradient != null)
             {
+                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+                RenderSettings.ambientSkyColor = topGradient.StartColor * topGradient.GradientMultiplier;
+                RenderSettings.ambientEquatorColor = (playerLightAmbient != null && playerLightAmbient.LightColor != Color.black) 
+                    ? playerLightAmbient.LightColor : topGradient.EndColor;
+                RenderSettings.ambientGroundColor = bottomGradient.EndColor * bottomGradient.GradientMultiplier;
+            }
+            else if (playerLightAmbient != null)
+            {
+                RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
                 RenderSettings.ambientLight = playerLightAmbient.LightColor;
             }
-            Debug.Log("[RelEnvironmentComponent] Applied REL environment fog and ambient light to scene RenderSettings.");
+
+            Debug.Log("[RelEnvironmentComponent] Applied complete REL environment fog, ambient lighting, and sky gradients to scene RenderSettings.");
         }
     }
 }
