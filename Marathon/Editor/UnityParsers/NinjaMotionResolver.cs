@@ -75,7 +75,7 @@ namespace SilentTools
             new TrackBindingDef { CategoryMask = 16, Mask = 0, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.x", GroupKey = "_MainTex_ST", ChannelIndex = 0, DefaultRestValue = 1f, InvertSign = false },
             new TrackBindingDef { CategoryMask = 16, Mask = 0, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.y", GroupKey = "_MainTex_ST", ChannelIndex = 1, DefaultRestValue = 1f, InvertSign = false },
             new TrackBindingDef { CategoryMask = 16, Mask = 0x800000U, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.z", GroupKey = "_MainTex_ST", ChannelIndex = 2, DefaultRestValue = 0f, InvertSign = false },
-            new TrackBindingDef { CategoryMask = 16, Mask = 0x1000000U, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.w", GroupKey = "_MainTex_ST", ChannelIndex = 3, DefaultRestValue = 0f, InvertSign = false }
+            new TrackBindingDef { CategoryMask = 16, Mask = 0x1000000U, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.w", GroupKey = "_MainTex_ST", ChannelIndex = 3, DefaultRestValue = 0f, InvertSign = true }
         };
 
         #region Angle Conversion Helpers
@@ -325,7 +325,9 @@ namespace SilentTools
             bool isMatMotion = (motionData.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL ||
                                motionData.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) ||
                                (motionData.ChunkID != null && (motionData.ChunkID.EndsWith("NV", StringComparison.OrdinalIgnoreCase) ||
-                                                               motionData.ChunkID.EndsWith("MV", StringComparison.OrdinalIgnoreCase)));
+                                                               motionData.ChunkID.EndsWith("MV", StringComparison.OrdinalIgnoreCase) ||
+                                                               motionData.ChunkID.EndsWith("MT", StringComparison.OrdinalIgnoreCase) ||
+                                                               motionData.ChunkID.EndsWith("MA", StringComparison.OrdinalIgnoreCase)));
 
             MotionType effectiveMotionType = isMatMotion
                 ? (motionData.Type | MotionType.NND_MOTIONTYPE_MATERIAL)
@@ -370,11 +372,10 @@ namespace SilentTools
             }
 
             bool isExplicitLoop = (motionData.Type & (MotionType.NND_MOTIONTYPE_REPEAT |
-                                                      MotionType.NND_MOTIONTYPE_MIRROR |
+                                                      MotionType.NND_MOTIONTYPE_CONSTREPEAT |
                                                       MotionType.NND_MOTIONTYPE_OFFSET)) != 0;
 
             bool isOneShot = (motionData.Type & (MotionType.NND_MOTIONTYPE_NOREPEAT |
-                                                 MotionType.NND_MOTIONTYPE_CONSTREPEAT |
                                                  MotionType.NND_MOTIONTYPE_TRIGGER)) != 0;
 
             if (!isExplicitLoop && motionData.SubMotions != null)
@@ -384,7 +385,7 @@ namespace SilentTools
                     if (sm == null) continue;
 
                     if ((sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT |
-                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_MIRROR |
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT |
                                                  SubMotionInterpolationType.NND_SMOTIPTYPE_OFFSET)) != 0)
                     {
                         isExplicitLoop = true;
@@ -392,7 +393,6 @@ namespace SilentTools
                     }
 
                     if ((sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_NOREPEAT |
-                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT |
                                                  SubMotionInterpolationType.NND_SMOTIPTYPE_TRIGGER)) != 0)
                     {
                         isOneShot = true;
@@ -400,12 +400,15 @@ namespace SilentTools
                 }
             }
 
-            bool shouldLoop = isExplicitLoop || !isOneShot;
+            bool shouldLoop = isExplicitLoop || (isMatMotion && !isOneShot) || (!isOneShot && (motionData.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL);
 
             clip.wrapMode = shouldLoop ? WrapMode.Loop : WrapMode.Once;
             var clipSettings = AnimationUtility.GetAnimationClipSettings(clip);
             clipSettings.loopTime = shouldLoop;
-            clipSettings.loopBlend = shouldLoop;
+            clipSettings.loopBlend = false;
+            clipSettings.loopBlendOrientation = false;
+            clipSettings.loopBlendPositionY = false;
+            clipSettings.loopBlendPositionXZ = false;
             AnimationUtility.SetAnimationClipSettings(clip, clipSettings);
 
             return clip;
@@ -421,15 +424,78 @@ namespace SilentTools
             List<MaterialBindingTarget> targets = new List<MaterialBindingTarget>();
             HashSet<string> seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // 1. Inspect live hierarchy if rootGO is instantiated
+            // 1. Map directly from NinjaObject mesh sets and node hierarchy definitions
+            if (objData?.SubObjects != null && objData.Nodes != null)
+            {
+                if (importMode == MeshImportMode.SingleSkinnedMesh)
+                {
+                    targets.Add(new MaterialBindingTarget { TargetPath = "", MaterialSlot = materialIndex });
+                    return targets;
+                }
+
+                if (importMode == MeshImportMode.CombinedByNode)
+                {
+                    for (int n = 0; n < objData.Nodes.Count; n++)
+                    {
+                        HashSet<int> matsInNode = new HashSet<int>();
+                        foreach (var subObj in objData.SubObjects)
+                        {
+                            foreach (var ms in subObj.MeshSets)
+                            {
+                                if (ms.NodeIndex == n) matsInNode.Add(ms.MaterialIndex);
+                            }
+                        }
+
+                        if (matsInNode.Contains(materialIndex))
+                        {
+                            string nodePath = (n >= 0 && n < nodeHierarchyTargets.Length) ? nodeHierarchyTargets[n] : $"Node_{n:0000}";
+                            bool isSingle = matsInNode.Count == 1;
+                            string targetPath = isSingle
+                                ? nodePath
+                                : (string.IsNullOrEmpty(nodePath) ? $"Mat_{materialIndex:00}" : $"{nodePath}/Mat_{materialIndex:00}");
+
+                            if (seenPaths.Add(targetPath))
+                            {
+                                targets.Add(new MaterialBindingTarget { TargetPath = targetPath, MaterialSlot = 0 });
+                            }
+                        }
+                    }
+                    if (targets.Count > 0) return targets;
+                }
+                else if (importMode == MeshImportMode.IndividualSubObjects)
+                {
+                    int subObjIdx = 0;
+                    foreach (var subObj in objData.SubObjects)
+                    {
+                        foreach (var ms in subObj.MeshSets)
+                        {
+                            if (ms.MaterialIndex == materialIndex)
+                            {
+                                string nodePath = (ms.NodeIndex >= 0 && ms.NodeIndex < nodeHierarchyTargets.Length)
+                                    ? nodeHierarchyTargets[ms.NodeIndex] : $"Node_{ms.NodeIndex:0000}";
+                                string targetPath = string.IsNullOrEmpty(nodePath) ? $"SubObj_{subObjIdx}" : $"{nodePath}/SubObj_{subObjIdx}";
+                                if (seenPaths.Add(targetPath))
+                                {
+                                    targets.Add(new MaterialBindingTarget { TargetPath = targetPath, MaterialSlot = 0 });
+                                }
+                            }
+                            subObjIdx++;
+                        }
+                    }
+                    if (targets.Count > 0) return targets;
+                }
+            }
+
+            // 2. Fallback: Inspect live hierarchy Renderers using exact material prefix matching
             if (rootGO != null)
             {
                 Renderer[] renderers = rootGO.GetComponentsInChildren<Renderer>(true);
+                string rootName = rootGO.name;
+
                 foreach (var r in renderers)
                 {
                     if (r == null) continue;
 
-                    // Match A: Child GameObject explicitly named Mat_XX
                     if (r.name.Equals($"Mat_{materialIndex:00}", StringComparison.OrdinalIgnoreCase) ||
                         r.name.Equals($"Mat_{materialIndex}", StringComparison.OrdinalIgnoreCase))
                     {
@@ -441,16 +507,13 @@ namespace SilentTools
                         continue;
                     }
 
-                    // Match B: Renderer material array contains the material index
                     Material[] sharedMats = r.sharedMaterials;
                     for (int m = 0; m < sharedMats.Length; m++)
                     {
                         Material mat = sharedMats[m];
                         if (mat == null) continue;
 
-                        if (mat.name.StartsWith($"{materialIndex}_", StringComparison.OrdinalIgnoreCase) ||
-                            mat.name.Contains($"_{materialIndex}_") ||
-                            mat.name.StartsWith($"Material_{materialIndex}_", StringComparison.OrdinalIgnoreCase))
+                        if (IsMaterialIndexMatch(mat.name, materialIndex, rootName))
                         {
                             string path = GetTransformPath(r.transform, rootGO.transform);
                             if (seenPaths.Add(path))
@@ -464,65 +527,20 @@ namespace SilentTools
                         }
                     }
                 }
-
-                if (targets.Count > 0) return targets;
-            }
-
-            // 2. Map from NinjaObject mesh sets and node hierarchy definitions
-            if (objData?.SubObjects != null)
-            {
-                if (importMode == MeshImportMode.SingleSkinnedMesh)
-                {
-                    targets.Add(new MaterialBindingTarget { TargetPath = "", MaterialSlot = materialIndex });
-                    return targets;
-                }
-
-                Dictionary<int, HashSet<int>> materialsPerNode = new Dictionary<int, HashSet<int>>();
-                int subObjIdx = 0;
-
-                foreach (var sub in objData.SubObjects)
-                {
-                    foreach (var ms in sub.MeshSets)
-                    {
-                        if (!materialsPerNode.ContainsKey(ms.NodeIndex))
-                            materialsPerNode[ms.NodeIndex] = new HashSet<int>();
-                        materialsPerNode[ms.NodeIndex].Add(ms.MaterialIndex);
-                    }
-                }
-
-                foreach (var sub in objData.SubObjects)
-                {
-                    foreach (var ms in sub.MeshSets)
-                    {
-                        if (ms.MaterialIndex == materialIndex)
-                        {
-                            string nodePath = (ms.NodeIndex >= 0 && ms.NodeIndex < nodeHierarchyTargets.Length)
-                                ? nodeHierarchyTargets[ms.NodeIndex] : $"Node_{ms.NodeIndex:0000}";
-
-                            string targetPath;
-                            if (importMode == MeshImportMode.CombinedByNode)
-                            {
-                                bool isMultiMatNode = materialsPerNode.TryGetValue(ms.NodeIndex, out var set) && set.Count > 1;
-                                targetPath = isMultiMatNode
-                                    ? (string.IsNullOrEmpty(nodePath) ? $"Mat_{materialIndex:00}" : $"{nodePath}/Mat_{materialIndex:00}")
-                                    : nodePath;
-                            }
-                            else
-                            {
-                                targetPath = string.IsNullOrEmpty(nodePath) ? $"SubObj_{subObjIdx}" : $"{nodePath}/SubObj_{subObjIdx}";
-                            }
-
-                            if (seenPaths.Add(targetPath))
-                            {
-                                targets.Add(new MaterialBindingTarget { TargetPath = targetPath, MaterialSlot = 0 });
-                            }
-                        }
-                        subObjIdx++;
-                    }
-                }
             }
 
             return targets;
+        }
+
+        private static bool IsMaterialIndexMatch(string matName, int materialIndex, string rootName)
+        {
+            if (string.IsNullOrEmpty(matName)) return false;
+
+            if (matName.StartsWith($"{materialIndex}_", StringComparison.OrdinalIgnoreCase)) return true;
+            if (matName.StartsWith($"Material_{materialIndex}_", StringComparison.OrdinalIgnoreCase)) return true;
+            if (!string.IsNullOrEmpty(rootName) && matName.StartsWith($"{rootName}_{materialIndex}_", StringComparison.OrdinalIgnoreCase)) return true;
+
+            return false;
         }
 
         private static string GetMaterialPropertyName(string basePropName, int materialSlot)
@@ -592,13 +610,24 @@ namespace SilentTools
                         {
                             var kf = (NinjaKeyframe.NNS_MOTION_KEY_VECTOR)objKf;
                             float time = (kf.Frame / 60.0f) * timeScale;
-                            float rawVal = binding.ChannelIndex switch
+                            float rawVal;
+
+                            if (binding.GroupKey == "_MainTex_ST")
                             {
-                                0 => kf.Value.x,
-                                1 => kf.Value.y,
-                                2 => kf.Value.z,
-                                _ => 0f
-                            };
+                                rawVal = (binding.PropertyName.EndsWith(".z") || (flags & 0x800000U) != 0)
+                                    ? kf.Value.x
+                                    : kf.Value.y;
+                            }
+                            else
+                            {
+                                rawVal = binding.ChannelIndex switch
+                                {
+                                    0 => kf.Value.x,
+                                    1 => kf.Value.y,
+                                    2 => kf.Value.z,
+                                    _ => 0f
+                                };
+                            }
 
                             if (binding.GroupKey == "localPosition") rawVal *= scale;
                             if (binding.InvertSign) rawVal = -rawVal;
