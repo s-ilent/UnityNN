@@ -2,7 +2,7 @@ using UnityEngine;
 using System;
 using System.Collections.Generic;
 
-namespace SilentTools
+namespace UnityNN
 {
     [Serializable]
     public class ObjectAnimationEntryData

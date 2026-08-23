@@ -1,4 +1,5 @@
 // File: Marathon/UnityParsers/NinjaMaterialResolver.cs
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System;
@@ -6,7 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using Marathon.Formats.Mesh.Ninja;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public enum MaterialLocation
     {

@@ -1,11 +1,12 @@
 // File: Marathon/UnityParsers/NinjaObjectResolver.cs
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System;
 using System.Collections.Generic;
 using Marathon.Formats.Mesh.Ninja;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public static class NinjaObjectResolver
     {

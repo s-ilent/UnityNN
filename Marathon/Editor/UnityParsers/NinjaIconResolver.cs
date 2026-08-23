@@ -1,11 +1,11 @@
 // File: Marathon/NinjaIconResolver.cs
-#if UNITY_EDITOR
+using UnityNN;
 using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public static class NinjaIconResolver
     {
@@ -179,4 +179,3 @@ namespace SilentTools
         }
     }
 }
-#endif

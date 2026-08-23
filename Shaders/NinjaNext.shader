@@ -222,5 +222,5 @@ Shader "NinjaNext/Standard"
         }
     }
 
-    CustomEditor "SilentTools.NinjaNextShaderGUI"
+    CustomEditor "UnityNN.Editor.NinjaNextShaderGUI"
 }

@@ -1,8 +1,9 @@
 // File: Marathon/Editor/UnityParsers/NinjaCoordinateUtility.cs
+using UnityNN;
 using UnityEngine;
 using System;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     /// <summary>
     /// Centralized coordinate space and math transformations between Sega NN (Direct3D/right-handed)

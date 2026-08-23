@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace SilentTools
+namespace UnityNN
 {
     [DisallowMultipleComponent]
     public class ParticleSequenceCueComponent : MonoBehaviour

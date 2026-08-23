@@ -1,7 +1,8 @@
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 
-namespace SilentTools.Editor
+namespace UnityNN.Editor
 {
     public partial class UnityNNInspectorWindow : EditorWindow
     {

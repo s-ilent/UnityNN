@@ -1,4 +1,5 @@
 // File: Marathon/Editor/Inspector/NinjaJsonSerializer.cs
+using UnityNN;
 using System;
 using System.IO;
 using System.Text;
@@ -7,7 +8,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace SilentTools.Editor
+namespace UnityNN.Editor
 {
     public static class NinjaJsonSerializer
     {

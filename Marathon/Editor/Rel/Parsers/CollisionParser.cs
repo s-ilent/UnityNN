@@ -1,10 +1,11 @@
 // File: Marathon/Rel/Parsers/CollisionParser.cs
+using UnityNN;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
 using Marathon.IO;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     /// <summary>
     /// Parser for NXR/XNR collision geometry files.

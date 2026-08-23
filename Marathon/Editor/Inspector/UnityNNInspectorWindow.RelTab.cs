@@ -1,9 +1,10 @@
 // File: Marathon/Editor/Inspector/UnityNNInspectorWindow.RelTab.cs
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 
-namespace SilentTools.Editor
+namespace UnityNN.Editor
 {
     public partial class UnityNNInspectorWindow : EditorWindow
     {

@@ -1,11 +1,12 @@
 // File: Marathon/Rel/RelFolderResolver.cs
+using UnityNN;
 using System;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public class ResolvedStageContext
     {

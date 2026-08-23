@@ -1,7 +1,8 @@
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public class NinjaNextShaderGUI : ShaderGUI
     {

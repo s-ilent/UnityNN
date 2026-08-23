@@ -1,5 +1,5 @@
 // File: Marathon/Editor/UnityParsers/ParticleEffectResolver.cs
-#if UNITY_EDITOR
+using UnityNN;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
@@ -7,7 +7,7 @@ using UnityEditor;
 using UnityEditor.AssetImporters;
 using Marathon.Formats.Particle;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public static class ParticleEffectResolver
     {
@@ -484,4 +484,3 @@ namespace SilentTools
         }
     }
 }
-#endif

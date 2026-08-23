@@ -1,6 +1,6 @@
 {
-    "name": "Marathon.Editor",
-    "rootNamespace": "",
+    "name": "UnityNN.Editor",
+    "rootNamespace": "UnityNN.Editor",
     "references": [
         "Marathon"
     ],

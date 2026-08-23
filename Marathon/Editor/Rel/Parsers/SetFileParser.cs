@@ -1,7 +1,8 @@
+using UnityNN;
 using System;
 using Marathon.IO;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public static class SetFileParser
     {

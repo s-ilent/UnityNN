@@ -1,4 +1,5 @@
 // File: Marathon/Editor/NinjaNextImporterEditor.cs
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.AssetImporters;
@@ -9,7 +10,7 @@ using Marathon.Formats.Mesh.Ninja;
 using Marathon.Formats.Archive;
 using Marathon.Formats.Particle;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     [CustomEditor(typeof(NinjaNextImporter))]
     [CanEditMultipleObjects]

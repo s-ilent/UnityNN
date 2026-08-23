@@ -1,6 +1,7 @@
+using UnityNN;
 using Marathon.IO;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public static class LndCommonParser
     {

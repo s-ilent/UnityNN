@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace SilentTools
+namespace UnityNN
 {
     public class RelObjectHitboxComponent : MonoBehaviour
     {

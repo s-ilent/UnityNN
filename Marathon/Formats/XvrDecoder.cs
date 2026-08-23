@@ -2,7 +2,7 @@
 using System;
 using UnityEngine;
 
-namespace SilentTools
+namespace UnityNN
 {
     public static class XvrDecoder
     {

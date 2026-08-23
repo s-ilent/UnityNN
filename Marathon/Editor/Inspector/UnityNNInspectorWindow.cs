@@ -1,11 +1,12 @@
 // File: Marathon/Editor/Inspector/UnityNNInspectorWindow.cs
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Collections.Generic;
 using Marathon.Formats.Mesh.Ninja;
 
-namespace SilentTools.Editor
+namespace UnityNN.Editor
 {
     public class ChunkSourceInfo
     {

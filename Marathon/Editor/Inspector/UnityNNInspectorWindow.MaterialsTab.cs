@@ -1,9 +1,10 @@
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 using Marathon.Formats.Mesh.Ninja;
 
-namespace SilentTools.Editor
+namespace UnityNN.Editor
 {
     public partial class UnityNNInspectorWindow : EditorWindow
     {

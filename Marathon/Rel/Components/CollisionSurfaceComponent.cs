@@ -1,7 +1,7 @@
 using UnityEngine;
 using System;
 
-namespace SilentTools
+namespace UnityNN
 {
     [Flags]
     public enum CollisionSurfaceFlags : ushort

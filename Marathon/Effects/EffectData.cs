@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace SilentTools
+namespace UnityNN
 {
     public enum EffectEmitterType
     {

@@ -1,11 +1,12 @@
 // File: Marathon/Rel/RelResolver.cs
+using UnityNN;
 using UnityEngine;
 using System;
 using System.IO;
 using System.Collections.Generic;
 using Marathon.IO;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public class RelFormatDescriptor
     {

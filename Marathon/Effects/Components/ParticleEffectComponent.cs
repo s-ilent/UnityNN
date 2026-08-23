@@ -1,7 +1,7 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-namespace SilentTools
+namespace UnityNN
 {
     [DisallowMultipleComponent]
     public class ParticleEffectComponent : MonoBehaviour

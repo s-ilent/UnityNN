@@ -1,7 +1,7 @@
 // File: Marathon/Rel/Components/RelEnvironmentComponent.cs
 using UnityEngine;
 
-namespace SilentTools
+namespace UnityNN
 {
     [DisallowMultipleComponent]
     public class RelEnvironmentComponent : MonoBehaviour

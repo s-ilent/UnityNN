@@ -1,10 +1,11 @@
+using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 using System.IO;
 using Marathon.Formats.Mesh.Ninja;
 
-namespace SilentTools
+namespace UnityNN.Editor
 {
     public static class NinjaNodeNameResolver
     {

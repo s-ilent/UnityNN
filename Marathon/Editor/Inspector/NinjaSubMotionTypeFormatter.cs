@@ -1,8 +1,9 @@
 // File: Marathon/Editor/Inspector/NinjaSubMotionTypeFormatter.cs
+using UnityNN;
 using System.Collections.Generic;
 using Marathon.Formats.Mesh.Ninja;
 
-namespace SilentTools.Editor
+namespace UnityNN.Editor
 {
     public static class NinjaSubMotionTypeFormatter
     {
