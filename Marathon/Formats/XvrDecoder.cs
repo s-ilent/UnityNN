@@ -45,6 +45,14 @@ namespace SilentTools
                 tex.Apply();
                 return tex;
             }
+            // DXT3 Compression
+            if (pixelFlags == 0x77 || pixelFlags == 0x78 || pixelFlags == 0x75 || pixelFlags == 0x76)
+            {
+                Texture2D tex = new Texture2D(width, height, TextureFormat.DXT5, false);
+                tex.LoadRawTextureData(pixelBytes);
+                tex.Apply();
+                return tex;
+            }
             // DXT5 Compression
             if (pixelFlags == 0x7B || pixelFlags == 0x7C)
             {
@@ -54,7 +62,7 @@ namespace SilentTools
                 return tex;
             }
 
-            // Unswizzle Morton-order Raster Formats (ARGB8888, ARGB1555, RGB565)
+            // Unswizzle Morton-order Raster Formats (ARGB8888, ARGB1555, RGB565, ARGB4444)
             byte[] rgbaPixels = UnswizzleRaster(pixelBytes, width, height, pixelFormat);
             if (rgbaPixels != null)
             {
@@ -73,7 +81,7 @@ namespace SilentTools
             int maxU = (int)Math.Log(height, 2);
 
             byte[] rgba = new byte[width * height * 4];
-            int bpp = (pixelFormat == 6 || pixelFormat == 7 || pixelFormat == 20) ? 4 : 2;
+            int bpp = (pixelFormat == 6 || pixelFormat == 7 || pixelFormat == 20 || pixelFormat == 21) ? 4 : 2;
 
             for (int j = 0; (j < width * height) && (j * bpp < swizzledData.Length); j++)
             {
@@ -104,6 +112,15 @@ namespace SilentTools
                         rgba[dstIdx + 1] = (byte)(((color >> 5) & 0x1F) * 255 / 31);
                         rgba[dstIdx + 2] = (byte)((color & 0x1F) * 255 / 31);
                         rgba[dstIdx + 3] = (byte)(((color >> 15) & 0x1) * 255);
+                    }
+                    else if (pixelFormat == 4) // ARGB4444
+                    {
+                        byte gb = swizzledData[srcIdx + 0];
+                        byte ar = swizzledData[srcIdx + 1];
+                        rgba[dstIdx + 0] = (byte)((ar & 0x0F) * 255 / 15);
+                        rgba[dstIdx + 1] = (byte)((gb >> 4)   * 255 / 15);
+                        rgba[dstIdx + 2] = (byte)((gb & 0x0F) * 255 / 15);
+                        rgba[dstIdx + 3] = (byte)((ar >> 4)   * 255 / 15);
                     }
                     else if (pixelFormat == 5) // RGB565
                     {
