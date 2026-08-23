@@ -290,15 +290,18 @@ namespace SilentTools
                         else if (d == 0 || lower.Contains("diff") || lower.Contains("alb") || lower.Contains("color") || lower.Contains("tex"))
                         {
                             mat.mainTexture = tex;
+                            mat.SetTextureOffset("_MainTex", NinjaCoordinateUtility.ToUnityUVOffset(desc.Offset));
                         }
                         else if (d == 1)
                         {
                             mat.SetTexture("_MainTex2", tex);
+                            mat.SetTextureOffset("_MainTex2", NinjaCoordinateUtility.ToUnityUVOffset(desc.Offset));
                             mat.SetFloat("_MainTex2BlendMode", (rawFlags & 0x20) != 0 ? 2.0f : 7.0f);
                         }
                         else if (d == 2)
                         {
                             mat.SetTexture("_MainTex3", tex);
+                            mat.SetTextureOffset("_MainTex3", NinjaCoordinateUtility.ToUnityUVOffset(desc.Offset));
                             mat.SetFloat("_MainTex3BlendMode", 1.0f);
                         }
                         else if (lower.Contains("nrm") || lower.Contains("norm") || lower.Contains("bump") || (desc.Type & 0x1000) != 0)

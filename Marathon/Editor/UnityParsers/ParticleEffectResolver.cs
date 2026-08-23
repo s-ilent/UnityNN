@@ -62,20 +62,10 @@ namespace SilentTools
                     var cue = effect.SequenceCues[i];
                     string cueName = $"[Cue_{i:00}] EffectID_{cue.EffectId} (Frames {cue.StartTime}-{cue.EndTime})";
 
-                    Vector3 pos = cue.Translation;
-                    if (float.IsNaN(pos.x) || float.IsInfinity(pos.x)) pos.x = 0f;
-                    if (float.IsNaN(pos.y) || float.IsInfinity(pos.y)) pos.y = 0f;
-                    if (float.IsNaN(pos.z) || float.IsInfinity(pos.z)) pos.z = 0f;
-
-                    Vector3 rot = cue.Rotation;
-                    if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
-                    if (float.IsNaN(rot.y) || float.IsInfinity(rot.y)) rot.y = 0f;
-                    if (float.IsNaN(rot.z) || float.IsInfinity(rot.z)) rot.z = 0f;
-
                     GameObject cueGO = new GameObject(cueName);
                     cueGO.transform.SetParent(root.transform, false);
-                    cueGO.transform.localPosition = new Vector3(-pos.x * scale, pos.y * scale, pos.z * scale);
-                    cueGO.transform.localEulerAngles = new Vector3(rot.x, -rot.y, -rot.z);
+                    cueGO.transform.localPosition = NinjaCoordinateUtility.ToUnityPosition(cue.Translation, scale);
+                    cueGO.transform.localEulerAngles = NinjaCoordinateUtility.ToUnityEuler(cue.Rotation);
 
                     var cueComp = cueGO.AddComponent<ParticleSequenceCueComponent>();
                     cueComp.effectId = cue.EffectId;

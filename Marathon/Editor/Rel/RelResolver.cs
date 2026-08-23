@@ -484,8 +484,8 @@ namespace SilentTools
                     {
                         string defName = SetObjectDefinitions.GetDefinitionName(obj.ObjID);
 
-                        Vector3 pos = new Vector3(-obj.Position.x * scale, obj.Position.y * scale, obj.Position.z * scale);
-                        Vector3 rot = new Vector3(-obj.Rotation.x, -obj.Rotation.y, -obj.Rotation.z);
+                        Vector3 pos = NinjaCoordinateUtility.ToUnityPosition(obj.Position, scale);
+                        Vector3 rot = NinjaCoordinateUtility.ToUnityEuler(obj.Rotation);
 
                         GameObject objGO = CreateChild(groupGO.transform, $"[Obj_{obj.ObjID:000}] {defName}", pos, rot);
 
@@ -657,7 +657,7 @@ namespace SilentTools
                 l.type = UnityEngine.LightType.Directional;
                 l.color = Color.white;
                 l.intensity = data.SunUnknown > 0 ? data.SunUnknown : 1.0f;
-                sun.transform.forward = -data.SunPosition.normalized;
+                sun.transform.forward = -NinjaCoordinateUtility.ToUnityNormal(data.SunPosition);
             }
         }
 
@@ -739,7 +739,7 @@ namespace SilentTools
 
             if (lightData != null && lightData.Direction != Vector3.zero)
             {
-                lGO.transform.forward = -lightData.Direction.normalized;
+                lGO.transform.forward = -NinjaCoordinateUtility.ToUnityNormal(lightData.Direction);
             }
 
             return lGO;

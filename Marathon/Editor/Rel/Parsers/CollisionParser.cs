@@ -327,8 +327,16 @@ namespace SilentTools
                 surfComp.triangleCount = colData.Triangles.Count;
                 surfComp.subMeshMaterialIDs = subMeshMatIDs;
                 surfComp.triangleMaterialIDs = triMatIDs;
-                if (colData.BoundingBoxMin.HasValue) surfComp.boundingBoxMin = NinjaCoordinateUtility.ToUnityPosition(colData.BoundingBoxMin.Value, scale);
-                if (colData.BoundingBoxMax.HasValue) surfComp.boundingBoxMax = NinjaCoordinateUtility.ToUnityPosition(colData.BoundingBoxMax.Value, scale);
+                if (colData.BoundingBoxMin.HasValue && colData.BoundingBoxMax.HasValue)
+                {
+                    NinjaCoordinateUtility.ToUnityBounds(
+                        colData.BoundingBoxMin.Value,
+                        colData.BoundingBoxMax.Value,
+                        scale,
+                        out surfComp.boundingBoxMin,
+                        out surfComp.boundingBoxMax
+                    );
+                }
             }
 
             return mesh;

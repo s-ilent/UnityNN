@@ -35,7 +35,7 @@ namespace SilentTools
         }
 
         /// <summary>
-        /// Transforms a normal vector from Ninja space to Unity space (X -> -X).
+        /// Transforms a normal or direction vector from Ninja space to Unity space (X -> -X).
         /// </summary>
         public static Vector3 ToUnityNormal(Vector3 normal)
         {
@@ -77,6 +77,18 @@ namespace SilentTools
             float u = float.IsNaN(offset.x) || float.IsInfinity(offset.x) ? 0f : offset.x;
             float v = float.IsNaN(offset.y) || float.IsInfinity(offset.y) ? 0f : -offset.y;
             return new Vector2(u, v);
+        }
+
+        /// <summary>
+        /// Transforms bounding box min/max extents from Ninja space to Unity space with scale,
+        /// ensuring min is strictly less than max after X-axis inversion.
+        /// </summary>
+        public static void ToUnityBounds(Vector3 min, Vector3 max, float scale, out Vector3 unityMin, out Vector3 unityMax)
+        {
+            Vector3 p1 = ToUnityPosition(min, scale);
+            Vector3 p2 = ToUnityPosition(max, scale);
+            unityMin = Vector3.Min(p1, p2);
+            unityMax = Vector3.Max(p1, p2);
         }
     }
 }
