@@ -84,13 +84,19 @@ namespace SilentTools
 
             if (descOff + 20 > n) return data;
 
-            // 4. Read 5 x uint32 descriptor
+            // 4. Read descriptor
             reader.JumpTo(payloadStart + descOff);
             uint quaPtr = reader.ReadUInt32();
             uint vertexCount = reader.ReadUInt32();
             uint vertexPtr = reader.ReadUInt32();
             uint faceCount = reader.ReadUInt32();
             uint facePtr = reader.ReadUInt32();
+
+            if (vertexCount > 500000 || faceCount > 500000)
+            {
+                Debug.LogWarning($"[CollisionParser] Implausibly large vertex ({vertexCount}) or face count ({faceCount}) encountered. Aborting.");
+                return data;
+            }
 
             // 5. Rebase pointers using qua marker
             uint baseAddr = (quaPtr >= (uint)quaIdx) ? quaPtr - (uint)quaIdx : 0;
@@ -201,7 +207,7 @@ namespace SilentTools
             outSubMeshMaterialIDs = new ushort[0];
             outTriangleMaterialIDs = new ushort[0];
 
-            if (colData == null || colData.Vertices == null || colData.Vertices.Count == 0 ||
+            if (colData?.Vertices == null || colData.Vertices.Count == 0 ||
                 colData.Triangles == null || colData.Triangles.Count == 0)
             {
                 return null;
@@ -210,14 +216,9 @@ namespace SilentTools
             Vector3[] positions = new Vector3[colData.Vertices.Count];
             for (int i = 0; i < colData.Vertices.Count; i++)
             {
-                Vector3 pos = colData.Vertices[i];
-                pos.x *= -1f * scale;
-                pos.y *= scale;
-                pos.z *= scale;
-                positions[i] = pos;
+                positions[i] = NinjaCoordinateUtility.ToUnityPosition(colData.Vertices[i], scale);
             }
 
-            // Group triangles by MaterialID (surface bitmask flags) into distinct submeshes
             Dictionary<ushort, List<int>> materialTriangles = new Dictionary<ushort, List<int>>();
             Dictionary<ushort, List<ushort>> materialTriMatIds = new Dictionary<ushort, List<ushort>>();
 
@@ -232,7 +233,7 @@ namespace SilentTools
                     materialTriMatIds[matId] = new List<ushort>();
                 }
 
-                // Invert winding (v0, v2, v1) for left-handed Unity coordinate conversion (x = -x)
+                // Invert winding (v0, v2, v1) for left-handed Unity coordinate conversion (X = -X)
                 materialTriangles[matId].Add(tri.VertexIndex0);
                 materialTriangles[matId].Add(tri.VertexIndex2);
                 materialTriangles[matId].Add(tri.VertexIndex1);
@@ -326,8 +327,8 @@ namespace SilentTools
                 surfComp.triangleCount = colData.Triangles.Count;
                 surfComp.subMeshMaterialIDs = subMeshMatIDs;
                 surfComp.triangleMaterialIDs = triMatIDs;
-                if (colData.BoundingBoxMin.HasValue) surfComp.boundingBoxMin = colData.BoundingBoxMin.Value * scale;
-                if (colData.BoundingBoxMax.HasValue) surfComp.boundingBoxMax = colData.BoundingBoxMax.Value * scale;
+                if (colData.BoundingBoxMin.HasValue) surfComp.boundingBoxMin = NinjaCoordinateUtility.ToUnityPosition(colData.BoundingBoxMin.Value, scale);
+                if (colData.BoundingBoxMax.HasValue) surfComp.boundingBoxMax = NinjaCoordinateUtility.ToUnityPosition(colData.BoundingBoxMax.Value, scale);
             }
 
             return mesh;

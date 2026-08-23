@@ -33,15 +33,8 @@ namespace SilentTools
                 string nodeName = !string.IsNullOrEmpty(node.Name) ? node.Name : $"Node_{i:0000}";
                 GameObject nodeGO = new GameObject(nodeName);
 
-                Vector3 pos = new Vector3(-node.Translation.x * settings.Scale, node.Translation.y * settings.Scale, node.Translation.z * settings.Scale);
-                Vector3 rot = node.Rotation;
-
-                if (float.IsNaN(rot.x) || float.IsInfinity(rot.x)) rot.x = 0f;
-                if (float.IsNaN(rot.y) || float.IsInfinity(rot.y)) rot.y = 0f;
-                if (float.IsNaN(rot.z) || float.IsInfinity(rot.z)) rot.z = 0f;
-
-                nodeGO.transform.localPosition = pos;
-                nodeGO.transform.localEulerAngles = new Vector3(rot.x, -rot.y, -rot.z);
+                nodeGO.transform.localPosition = NinjaCoordinateUtility.ToUnityPosition(node.Translation, settings.Scale);
+                nodeGO.transform.localEulerAngles = NinjaCoordinateUtility.ToUnityEuler(node.Rotation);
                 nodeGO.transform.localScale = (node.Scaling == Vector3.zero) ? Vector3.one : node.Scaling;
 
                 if (node.ParentIndex >= 0 && node.ParentIndex < outNodeTransforms.Count)
@@ -102,7 +95,10 @@ namespace SilentTools
             NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
-            MeshBuffer buffer = new MeshBuffer();
+            int estimatedVerts = 0;
+            foreach (var vl in objData.VertexLists) estimatedVerts += vl.Vertices.Count;
+
+            MeshBuffer buffer = new MeshBuffer(estimatedVerts);
 
             foreach (var subObj in objData.SubObjects)
             {
@@ -205,12 +201,14 @@ namespace SilentTools
         {
             bool isSkinned = false;
             HashSet<int> boneSet = new HashSet<int>();
+            int estimatedVerts = 0;
 
             foreach (var ms in meshSets)
             {
                 if (ms.VertexListIndex >= 0 && ms.VertexListIndex < objData.VertexLists.Count)
                 {
                     var vl = objData.VertexLists[ms.VertexListIndex];
+                    estimatedVerts += vl.Vertices.Count;
                     if (vl.BoneMatrixIndices != null && vl.BoneMatrixIndices.Count > 0)
                     {
                         isSkinned = true;
@@ -227,7 +225,7 @@ namespace SilentTools
             }
 
             Matrix4x4? nodeXform = isSkinned ? (Matrix4x4?)null : nodeTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
-            MeshBuffer buffer = new MeshBuffer();
+            MeshBuffer buffer = new MeshBuffer(estimatedVerts);
 
             foreach (var ms in meshSets)
             {
@@ -311,7 +309,7 @@ namespace SilentTools
                     Matrix4x4? nodeXform = (!isSkinned && parentTr != rootGO.transform)
                         ? parentTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix : (Matrix4x4?)null;
 
-                    MeshBuffer buffer = new MeshBuffer();
+                    MeshBuffer buffer = new MeshBuffer(vList.Vertices.Count);
                     buffer.AppendMeshSet(objData, ms, settings.Scale, nodeXform, null, 0, 0);
 
                     Mesh mesh = buffer.BuildMesh($"{assetName}_Mesh_{subObjIdx}");
@@ -370,21 +368,22 @@ namespace SilentTools
             string name,
             Matrix4x4? transformMatrix = null)
         {
-            if (vList == null || vList.Vertices == null || vList.Vertices.Count == 0) return null;
+            if (vList?.Vertices == null || vList.Vertices.Count == 0) return null;
             NinjaObject dummy = new NinjaObject();
             dummy.VertexLists.Add(vList);
             dummy.PrimitiveLists.Add(pList);
             NinjaMeshSet ms = new NinjaMeshSet { VertexListIndex = 0, PrimitiveListIndex = 0 };
 
-            MeshBuffer buffer = new MeshBuffer();
+            MeshBuffer buffer = new MeshBuffer(vList.Vertices.Count);
             buffer.AppendMeshSet(dummy, ms, scale, transformMatrix, null, 0, 0);
             return buffer.BuildMesh(name);
         }
 
         public static List<int> DecodeIndices(NinjaPrimitiveList pList)
         {
-            List<int> triangles = new List<int>();
-            if (pList?.IndexIndices == null || pList.IndexIndices.Count < 3) return triangles;
+            if (pList?.IndexIndices == null || pList.IndexIndices.Count < 3) return new List<int>();
+
+            List<int> triangles = new List<int>(pList.IndexIndices.Count * 2);
 
             if (pList.StripIndices != null && pList.StripIndices.Count > 0)
             {
@@ -439,14 +438,28 @@ namespace SilentTools
 
         private class MeshBuffer
         {
-            public readonly List<Vector3> Positions = new List<Vector3>();
-            public readonly List<Vector3> Normals = new List<Vector3>();
-            public readonly List<Vector4> Tangents = new List<Vector4>();
-            public readonly List<Color32> Colors = new List<Color32>();
-            public readonly List<Vector2> UVs = new List<Vector2>();
-            public readonly List<BoneWeight> BoneWeights = new List<BoneWeight>();
-            public readonly Dictionary<int, List<int>> SubmeshTriangles = new Dictionary<int, List<int>>();
+            public readonly List<Vector3> Positions;
+            public readonly List<Vector3> Normals;
+            public readonly List<Vector4> Tangents;
+            public readonly List<Color32> Colors;
+            public readonly List<Vector2> UVs;
+            public readonly List<Vector2> UV2s;
+            public readonly List<BoneWeight> BoneWeights;
+            public readonly Dictionary<int, List<int>> SubmeshTriangles;
             public bool HasWeights;
+
+            public MeshBuffer(int vertexCapacity = 0)
+            {
+                int cap = Math.Max(0, vertexCapacity);
+                Positions = new List<Vector3>(cap);
+                Normals = new List<Vector3>(cap);
+                Tangents = new List<Vector4>(cap);
+                Colors = new List<Color32>(cap);
+                UVs = new List<Vector2>(cap);
+                UV2s = new List<Vector2>(cap);
+                BoneWeights = new List<BoneWeight>(cap);
+                SubmeshTriangles = new Dictionary<int, List<int>>();
+            }
 
             public List<int> GetSortedSubmeshKeys()
             {
@@ -482,25 +495,34 @@ namespace SilentTools
                     NinjaVertex vert = vList.Vertices[v];
                     if (vert == null) continue;
 
-                    Vector3 pos = vert.Position.GetValueOrDefault();
-                    pos = new Vector3(-pos.x * scale, pos.y * scale, pos.z * scale);
+                    Vector3 rawPos = vert.Position.GetValueOrDefault();
+                    Vector3 pos = NinjaCoordinateUtility.ToUnityPosition(rawPos, scale);
                     if (applyXform) pos = xform.MultiplyPoint3x4(pos);
                     Positions.Add(pos);
 
-                    Vector3 norm = vert.Normals.GetValueOrDefault(Vector3.up);
-                    norm = new Vector3(-norm.x, norm.y, norm.z).normalized;
+                    Vector3 rawNorm = vert.Normals.GetValueOrDefault(Vector3.up);
+                    Vector3 norm = NinjaCoordinateUtility.ToUnityNormal(rawNorm);
                     if (applyXform) norm = xform.MultiplyVector(norm).normalized;
                     Normals.Add(norm);
 
-                    Vector3 tan = vert.Tangent.GetValueOrDefault(Vector3.right);
-                    Vector3 tanScaled = new Vector3(-tan.x, tan.y, tan.z).normalized;
-                    if (applyXform) tanScaled = xform.MultiplyVector(tanScaled).normalized;
-                    Tangents.Add(new Vector4(tanScaled.x, tanScaled.y, tanScaled.z, 1.0f));
+                    Vector3 rawTan = vert.Tangent.GetValueOrDefault(Vector3.right);
+                    Vector4 tan = NinjaCoordinateUtility.ToUnityTangent(rawTan);
+                    if (applyXform)
+                    {
+                        Vector3 transformedTan = xform.MultiplyVector(new Vector3(tan.x, tan.y, tan.z)).normalized;
+                        tan = new Vector4(transformedTan.x, transformedTan.y, transformedTan.z, tan.w);
+                    }
+                    Tangents.Add(tan);
 
                     if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 0)
-                        UVs.Add(new Vector2(vert.TextureCoordinates[0].x, 1.0f - vert.TextureCoordinates[0].y));
+                        UVs.Add(NinjaCoordinateUtility.ToUnityUV(vert.TextureCoordinates[0]));
                     else
                         UVs.Add(Vector2.zero);
+
+                    if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 1)
+                        UV2s.Add(NinjaCoordinateUtility.ToUnityUV(vert.TextureCoordinates[1]));
+                    else if (UV2s.Count > 0)
+                        UV2s.Add(Vector2.zero);
 
                     if (vert.VertexColours != null && vert.VertexColours.Length >= 4)
                         Colors.Add(new Color32(vert.VertexColours[2], vert.VertexColours[1], vert.VertexColours[0], vert.VertexColours[3]));
@@ -550,6 +572,7 @@ namespace SilentTools
                 mesh.normals = Normals.ToArray();
                 mesh.tangents = Tangents.ToArray();
                 mesh.uv = UVs.ToArray();
+                if (UV2s.Count == Positions.Count) mesh.uv2 = UV2s.ToArray();
                 mesh.colors32 = Colors.ToArray();
                 if (HasWeights) mesh.boneWeights = BoneWeights.ToArray();
 
