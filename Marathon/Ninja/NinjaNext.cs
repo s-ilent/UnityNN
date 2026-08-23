@@ -37,7 +37,7 @@ namespace Marathon.Formats.Mesh.Ninja
             ["TL"] = (r, id, d) => { d.TextureList = new NinjaTextureList(); d.TextureList.Read(r); },
             ["EF"] = (r, id, d) => { d.EffectList = new NinjaEffectList(); d.EffectList.Read(r); },
             ["NN"] = (r, id, d) => { d.NodeNameList = new NinjaNodeNameList(); d.NodeNameList.Read(r); },
-            ["TN"] = (r, id, d) => { d.NodeNameList = new NinjaNodeNameList(); d.NodeNameList.Read(r); }, // Morph Target Names
+            ["TN"] = (r, id, d) => { d.NodeNameList = new NinjaNodeNameList(); d.NodeNameList.Read(r); },
             ["OB"] = (r, id, d) => { d.Object = new NinjaObject(); d.Object.Read(r); },
             ["LI"] = (r, id, d) => { d.Light = new NinjaLight(); d.Light.Read(r); },
             ["CA"] = (r, id, d) => { d.Camera = new NinjaCamera(); d.Camera.Read(r); },
@@ -47,6 +47,12 @@ namespace Marathon.Formats.Mesh.Ninja
             ["ML"] = ReadMotionChunk,
             ["MM"] = ReadMotionChunk,
             ["MV"] = ReadMotionChunk,
+            ["MT"] = ReadMotionChunk,
+            ["ME"] = ReadMotionChunk,
+            ["MD"] = ReadMotionChunk,
+            ["MS"] = ReadMotionChunk,
+            ["MP"] = ReadMotionChunk,
+            ["MR"] = ReadMotionChunk,
             ["NV"] = ReadMotionChunk
         };
 
@@ -54,7 +60,12 @@ namespace Marathon.Formats.Mesh.Ninja
         {
             NinjaMotion motion = new NinjaMotion { ChunkID = chunkID };
             motion.Read(reader);
-            if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) || chunkID.EndsWith("NV") || chunkID.EndsWith("MV") || chunkID.EndsWith("MA"))
+            if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) ||
+                (motion.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL ||
+                chunkID.EndsWith("NV", StringComparison.OrdinalIgnoreCase) ||
+                chunkID.EndsWith("MV", StringComparison.OrdinalIgnoreCase) ||
+                chunkID.EndsWith("MT", StringComparison.OrdinalIgnoreCase) ||
+                chunkID.EndsWith("MA", StringComparison.OrdinalIgnoreCase))
             {
                 data.MaterialMotion = motion;
             }
@@ -170,6 +181,10 @@ namespace Marathon.Formats.Mesh.Ninja
                 if (ChunkDispatchTable.TryGetValue(tag, out var handler))
                 {
                     handler(reader, chunkID, Data);
+                }
+                else if (tag.StartsWith("M") || tag.EndsWith("V") || tag.EndsWith("M"))
+                {
+                    ReadMotionChunk(reader, chunkID, Data);
                 }
             }
         }

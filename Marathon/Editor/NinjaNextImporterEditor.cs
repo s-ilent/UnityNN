@@ -93,7 +93,6 @@ namespace SilentTools
                     m_PreviewData.Load(assetPath);
                 }
 
-                // Cache animator controller generation capability on asset load
                 m_CanGenerateController = NinjaAnimatorResolver.CanGenerateAnimatorController(
                     assetPath,
                     out m_DistinctBoneCount,
@@ -127,7 +126,6 @@ namespace SilentTools
             bool isRelAsset = ext is ".rel" or ".xnr" or ".gnr" or ".znr";
             bool isArchive = ext is ".nbl" or ".gbl" or ".zbl";
 
-            // Archive Extraction Utility Banner
             if (isArchive)
             {
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -140,11 +138,9 @@ namespace SilentTools
                 EditorGUILayout.Space(2);
             }
 
-            // Top File Contents Overview Card
             DrawFileContentsOverview(ext, isModelAsset, isMotionAsset, isTexturePackage, isRelAsset, isParticleAsset);
             EditorGUILayout.Space(4);
 
-            // Context-Aware Tab Toolbar
             List<string> tabs = new List<string>();
             if (isModelAsset) { tabs.Add("Model"); tabs.Add("Materials"); }
             if (isModelAsset || isMotionAsset) { tabs.Add("Animation"); }
@@ -524,16 +520,14 @@ namespace SilentTools
             {
                 EditorGUI.indentLevel++;
 
-                EditorGUI.BeginDisabledGroup(!m_CanGenerateController);
                 if (m_GenerateAnimatorControllerProp != null)
                 {
                     EditorGUILayout.PropertyField(m_GenerateAnimatorControllerProp, new GUIContent("Generate Animator Controller"));
                 }
-                EditorGUI.EndDisabledGroup();
 
-                if (!m_CanGenerateController)
+                if (m_DistinctBoneCount > 1 || m_DistinctTexCount > 1)
                 {
-                    EditorGUILayout.HelpBox($"Animator Controller auto-generation is disabled because this asset contains multiple distinct state tracks ({m_DistinctBoneCount} bones, {m_DistinctTexCount} materials). Access individual clips via RelObjectAnimationComponent.", MessageType.None);
+                    EditorGUILayout.HelpBox($"Asset has additional sub-animations ({m_DistinctBoneCount} node tracks, {m_DistinctTexCount} material tracks). Auto-generated Controller binds primary main-mesh animations; all animations remain accessible via RelObjectAnimationComponent.", MessageType.None);
                 }
 
                 if (m_NodeHierarchyTargetProp != null)

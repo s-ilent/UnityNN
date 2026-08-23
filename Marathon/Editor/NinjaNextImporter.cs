@@ -1,4 +1,4 @@
-// File: Marathon/NinjaNextImporter.cs
+// File: Marathon/Editor/NinjaNextImporter.cs
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.AssetImporters;
@@ -75,7 +75,7 @@ namespace SilentTools
         "gno", "gna", "gnj", "gnm", "gnv", "gnt", "gnn", "gnc", "gnl", "gnr", "gbl",
         // PS2 / PSP formats
         "zno", "znm", "znt", "znn", "znr", "zbl",
-        // PSU particle format. Might be generic?
+        // PSU particle format.
         "dat"
     })]
     public class NinjaNextImporter : ScriptedImporter
@@ -216,11 +216,20 @@ namespace SilentTools
                 NinjaMotion mot = loader.Data.Motion ?? loader.Data.MaterialMotion;
                 if (mot != null)
                 {
+                    NinjaObject associatedObj = null;
                     string[] targets = (settings.NodeHierarchyTarget != null && settings.NodeHierarchyTarget.Length > 0)
                         ? settings.NodeHierarchyTarget
-                        : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx);
+                        : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx, out associatedObj);
 
-                    AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, assetName, settings.Scale, targets, settings.MeshImportMode);
+                    AnimationClip clip = NinjaMotionResolver.ResolveMotion(
+                        mot,
+                        assetName,
+                        settings.Scale,
+                        targets,
+                        settings.MeshImportMode,
+                        associatedObj
+                    );
+
                     if (clip != null)
                     {
                         ctx.AddObjectToAsset("main", clip, icon);

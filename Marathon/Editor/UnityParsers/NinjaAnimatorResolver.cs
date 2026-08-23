@@ -16,9 +16,29 @@ namespace SilentTools
             ".xnm", ".xnv", ".gnm", ".gnv", ".znm", ".znv"
         };
 
+        private static readonly string[] ModelExtensions = {
+            ".xno", ".xna", ".xnj", ".gno", ".gna", ".gnj", ".zno"
+        };
+
+        /// <summary>
+        /// Checks if a base filename corresponds to an independent model asset in the given directory.
+        /// </summary>
+        public static bool IsIndependentModelAsset(string directory, string baseFileName)
+        {
+            if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(baseFileName)) return false;
+
+            for (int i = 0; i < ModelExtensions.Length; i++)
+            {
+                if (File.Exists(Path.Combine(directory, baseFileName + ModelExtensions[i])))
+                    return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// Finds all animation files matching the model's name (exact or prefix: modelName_*.xnm/xnv)
-        /// in the local directory and immediate parent/sibling directories.
+        /// in the local directory and immediate parent/sibling directories, excluding animations
+        /// that belong to separate independent model assets.
         /// </summary>
         public static List<string> FindModelAnimationFiles(string assetPath)
         {
@@ -34,7 +54,6 @@ namespace SilentTools
 
             List<string> candidateDirs = new List<string> { baseDir };
 
-            // Check parent and sibling directories (e.g., _HoltesCommon <-> map folders)
             string parent = Path.GetDirectoryName(baseDir)?.Replace('\\', '/');
             if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
             {
@@ -67,13 +86,26 @@ namespace SilentTools
                         if (animExts.Contains(ext))
                         {
                             string fn = Path.GetFileNameWithoutExtension(file);
-                            if (fn.Equals(assetName, StringComparison.OrdinalIgnoreCase) ||
-                                fn.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+
+                            // Exact match: Always belongs to this mesh
+                            if (fn.Equals(assetName, StringComparison.OrdinalIgnoreCase))
                             {
                                 string normPath = file.Replace('\\', '/');
                                 if (seenPaths.Add(normPath))
                                 {
                                     results.Add(normPath);
+                                }
+                            }
+                            // Prefix match: Ensure this is not a separate independent mesh asset (e.g. guardarea_add.xno)
+                            else if (fn.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!IsIndependentModelAsset(dir, fn))
+                                {
+                                    string normPath = file.Replace('\\', '/');
+                                    if (seenPaths.Add(normPath))
+                                    {
+                                        results.Add(normPath);
+                                    }
                                 }
                             }
                         }
@@ -112,19 +144,37 @@ namespace SilentTools
             // 1. Embedded Motions in Model chunk (.xnj / multi-chunk containers)
             if (loader.Data.Motion != null)
             {
-                mainNodeClip = NinjaMotionResolver.ResolveMotion(loader.Data.Motion, $"{assetName}_Animation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
+                mainNodeClip = NinjaMotionResolver.ResolveMotion(
+                    loader.Data.Motion,
+                    $"{assetName}_Animation",
+                    settings.Scale,
+                    rootGO,
+                    nodeTransforms,
+                    settings.MeshImportMode,
+                    loader.Data.Object
+                );
+
                 if (mainNodeClip != null && loadedClipNames.Add(mainNodeClip.name))
                 {
                     ctx.AddObjectToAsset("NodeAnimation", mainNodeClip);
                     loadedClips.Add(mainNodeClip);
-                    loadedClipCache[assetName] = mainNodeClip;
+                    loadedClipCache[$"{assetName}_node"] = mainNodeClip;
                     distinctBoneFiles.Add(assetName);
                 }
             }
 
             if (loader.Data.MaterialMotion != null)
             {
-                mainMatClip = NinjaMotionResolver.ResolveMotion(loader.Data.MaterialMotion, $"{assetName}_MaterialAnimation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
+                mainMatClip = NinjaMotionResolver.ResolveMotion(
+                    loader.Data.MaterialMotion,
+                    $"{assetName}_MaterialAnimation",
+                    settings.Scale,
+                    rootGO,
+                    nodeTransforms,
+                    settings.MeshImportMode,
+                    loader.Data.Object
+                );
+
                 if (mainMatClip != null && loadedClipNames.Add(mainMatClip.name))
                 {
                     ctx.AddObjectToAsset("MaterialAnimation", mainMatClip);
@@ -134,7 +184,7 @@ namespace SilentTools
                 }
             }
 
-            // 2. Discover Associated Named Animation Files (Exact: assetName.* and Prefix: assetName_*.*)
+            // 2. Discover Associated Named Animation Files
             List<string> animFiles = FindModelAnimationFiles(assetPath);
 
             for (int i = 0; i < animFiles.Count; i++)
@@ -143,40 +193,62 @@ namespace SilentTools
                 if (animPath.Equals(assetPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)) continue;
 
                 string rawAnimName = Path.GetFileNameWithoutExtension(animPath);
-                if (loadedClipCache.ContainsKey(rawAnimName)) continue;
+                string ext = Path.GetExtension(animPath).ToLowerInvariant();
+                bool isMatExt = ext is ".xnv" or ".gnv" or ".znv";
+                string cacheKey = isMatExt ? $"{rawAnimName}_mat" : $"{rawAnimName}_node";
+
+                if (loadedClipCache.ContainsKey(cacheKey)) continue;
 
                 try
                 {
                     NinjaNext animLoader = new NinjaNext();
                     animLoader.Load(animPath);
 
-                    string ext = Path.GetExtension(animPath).ToLowerInvariant();
-                    bool isMat = ext is ".xnv" or ".gnv" or ".znv" || 
-                                (animLoader.Data.MaterialMotion != null) || 
+                    bool isMat = isMatExt ||
+                                (animLoader.Data.MaterialMotion != null) ||
                                 (animLoader.Data.Motion?.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) == true);
 
                     NinjaMotion mot = isMat ? (animLoader.Data.MaterialMotion ?? animLoader.Data.Motion) : animLoader.Data.Motion;
                     if (mot != null)
                     {
                         ctx.DependsOnSourceAsset(animPath);
+
+                        string resolvedClipName = isMat ? $"{rawAnimName}_Material" : rawAnimName;
                         string clipId = isMat ? $"MatAnim_{rawAnimName}" : $"Anim_{rawAnimName}";
-                        AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, rawAnimName, settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
+
+                        AnimationClip clip = NinjaMotionResolver.ResolveMotion(
+                            mot,
+                            resolvedClipName,
+                            settings.Scale,
+                            rootGO,
+                            nodeTransforms,
+                            settings.MeshImportMode,
+                            loader.Data.Object
+                        );
 
                         if (clip != null && loadedClipNames.Add(clip.name))
                         {
                             ctx.AddObjectToAsset(clipId, clip);
                             loadedClips.Add(clip);
-                            loadedClipCache[rawAnimName] = clip;
+                            loadedClipCache[cacheKey] = clip;
+
+                            bool isExactMatch = rawAnimName.Equals(assetName, StringComparison.OrdinalIgnoreCase);
 
                             if (isMat)
                             {
                                 distinctTexFiles.Add(rawAnimName);
-                                mainMatClip ??= clip;
+                                if (mainMatClip == null || isExactMatch)
+                                {
+                                    mainMatClip = clip;
+                                }
                             }
                             else
                             {
                                 distinctBoneFiles.Add(rawAnimName);
-                                mainNodeClip ??= clip;
+                                if (mainNodeClip == null || isExactMatch)
+                                {
+                                    mainNodeClip = clip;
+                                }
                             }
 
                             if (animMeta == null)
@@ -200,13 +272,12 @@ namespace SilentTools
                 }
             }
 
-            // 3. Attach Animator & Controller Auto-Setup
+            // 3. Attach Animator & Controller Auto-Setup (Binds primary main-mesh animations)
             if (loadedClips.Count > 0)
             {
                 Animator animator = rootGO.AddComponent<Animator>();
-                bool isSingleAnim = distinctBoneFiles.Count <= 1 && distinctTexFiles.Count <= 1;
 
-                if (settings.GenerateAnimatorController && isSingleAnim && (mainNodeClip != null || mainMatClip != null))
+                if (settings.GenerateAnimatorController && (mainNodeClip != null || mainMatClip != null))
                 {
                     BuildTwoLayerAnimatorController(assetName, mainNodeClip, mainMatClip, animator, ctx);
                 }
@@ -215,7 +286,8 @@ namespace SilentTools
 
         public static bool CanGenerateAnimatorController(string assetPath, out int distinctBoneCount, out int distinctTexCount)
         {
-            distinctBoneCount = 0; distinctTexCount = 0;
+            distinctBoneCount = 0;
+            distinctTexCount = 0;
             if (string.IsNullOrEmpty(assetPath)) return true;
 
             HashSet<string> distinctBones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -233,7 +305,7 @@ namespace SilentTools
 
             distinctBoneCount = distinctBones.Count;
             distinctTexCount = distinctTexs.Count;
-            return distinctBones.Count <= 1 && distinctTexs.Count <= 1;
+            return true;
         }
 
         private static void BuildTwoLayerAnimatorController(
