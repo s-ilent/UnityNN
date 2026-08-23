@@ -378,19 +378,11 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     
     if (isUnlit)
     {
-    /*
-        if (isForwardAdd)
-        {
-            return half4(0, 0, 0, material.baseColor.a);
-        }
-        half3 finalRGB = baseBrightness * material.baseColor.rgb + material.emissive;
-        if (!noFog) applyUnityFog(finalRGB, fogDepth);
-        return half4(finalRGB, material.baseColor.a);
-    */    
-        // if (_Mode == 4.0) baseBrightness = length(baseBrightness);
-        diffuse = baseBrightness * lerp(_AmbientColor.rgb, 1.0, min(saturate(NdotL / 0.5), shading.attenuation));
+        float shadowing = saturate(shading.attenuation);
+        baseBrightness = length(baseBrightness);
+        diffuse = baseBrightness * lerp(_AmbientColor.rgb, 1.0, shadowing);
         ambient = 0;
-        
+
         if (isForwardAdd)
         {
             diffuse *= saturate(shading.attenuation / 0.5);
