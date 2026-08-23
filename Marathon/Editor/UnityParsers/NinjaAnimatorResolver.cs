@@ -1,4 +1,4 @@
-// File: Marathon/UnityParsers/NinjaAnimatorResolver.cs
+// File: Marathon/Editor/UnityParsers/NinjaAnimatorResolver.cs
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.AssetImporters;
@@ -12,6 +12,79 @@ namespace SilentTools
 {
     public static class NinjaAnimatorResolver
     {
+        private static readonly string[] AnimationExtensions = {
+            ".xnm", ".xnv", ".gnm", ".gnv", ".znm", ".znv"
+        };
+
+        /// <summary>
+        /// Finds all animation files matching the model's name (exact or prefix: modelName_*.xnm/xnv)
+        /// in the local directory and immediate parent/sibling directories.
+        /// </summary>
+        public static List<string> FindModelAnimationFiles(string assetPath)
+        {
+            List<string> results = new List<string>();
+            if (string.IsNullOrEmpty(assetPath)) return results;
+
+            string baseDir = Path.GetDirectoryName(assetPath).Replace('\\', '/');
+            string assetName = Path.GetFileNameWithoutExtension(assetPath);
+            string prefix = assetName + "_";
+
+            HashSet<string> seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> animExts = new HashSet<string>(AnimationExtensions, StringComparer.OrdinalIgnoreCase);
+
+            List<string> candidateDirs = new List<string> { baseDir };
+
+            // Check parent and sibling directories (e.g., _HoltesCommon <-> map folders)
+            string parent = Path.GetDirectoryName(baseDir)?.Replace('\\', '/');
+            if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent))
+            {
+                candidateDirs.Add(parent);
+                try
+                {
+                    string[] subDirs = Directory.GetDirectories(parent, "*", SearchOption.TopDirectoryOnly);
+                    for (int i = 0; i < subDirs.Length; i++)
+                    {
+                        string sub = subDirs[i].Replace('\\', '/');
+                        if (!sub.Equals(baseDir, StringComparison.OrdinalIgnoreCase))
+                            candidateDirs.Add(sub);
+                    }
+                }
+                catch { }
+            }
+
+            for (int d = 0; d < candidateDirs.Count; d++)
+            {
+                string dir = candidateDirs[d];
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) continue;
+
+                try
+                {
+                    string[] files = Directory.GetFiles(dir, "*.*", SearchOption.TopDirectoryOnly);
+                    for (int f = 0; f < files.Length; f++)
+                    {
+                        string file = files[f];
+                        string ext = Path.GetExtension(file);
+                        if (animExts.Contains(ext))
+                        {
+                            string fn = Path.GetFileNameWithoutExtension(file);
+                            if (fn.Equals(assetName, StringComparison.OrdinalIgnoreCase) ||
+                                fn.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                            {
+                                string normPath = file.Replace('\\', '/');
+                                if (seenPaths.Add(normPath))
+                                {
+                                    results.Add(normPath);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            return results;
+        }
+
         public static void SetupModelAnimations(
             NinjaNext loader,
             GameObject rootGO,
@@ -31,116 +104,99 @@ namespace SilentTools
             AnimationClip mainNodeClip = null;
             AnimationClip mainMatClip = null;
 
-            // 1. Embedded & Adjacent Matching Motions (.xnm / .xnv)
-            NinjaMotion nodeMotion = loader.Data.Motion;
-            NinjaMotion matMotion = loader.Data.MaterialMotion;
+            HashSet<string> distinctBoneFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> distinctTexFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            NinjaMotionResolver.ResolveLinkedMotions(assetPath, ctx, out NinjaMotion extraNodeMot, out NinjaMotion extraMatMot, out _, out _);
-            nodeMotion ??= extraNodeMot;
-            matMotion ??= extraMatMot;
+            RelObjectAnimationComponent animMeta = null;
 
-            if (nodeMotion != null)
+            // 1. Embedded Motions in Model chunk (.xnj / multi-chunk containers)
+            if (loader.Data.Motion != null)
             {
-                mainNodeClip = NinjaMotionResolver.ResolveMotion(nodeMotion, $"{assetName}_Animation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
+                mainNodeClip = NinjaMotionResolver.ResolveMotion(loader.Data.Motion, $"{assetName}_Animation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
                 if (mainNodeClip != null && loadedClipNames.Add(mainNodeClip.name))
                 {
                     ctx.AddObjectToAsset("NodeAnimation", mainNodeClip);
                     loadedClips.Add(mainNodeClip);
                     loadedClipCache[assetName] = mainNodeClip;
+                    distinctBoneFiles.Add(assetName);
                 }
             }
 
-            if (matMotion != null)
+            if (loader.Data.MaterialMotion != null)
             {
-                mainMatClip = NinjaMotionResolver.ResolveMotion(matMotion, $"{assetName}_MaterialAnimation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
+                mainMatClip = NinjaMotionResolver.ResolveMotion(loader.Data.MaterialMotion, $"{assetName}_MaterialAnimation", settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
                 if (mainMatClip != null && loadedClipNames.Add(mainMatClip.name))
                 {
                     ctx.AddObjectToAsset("MaterialAnimation", mainMatClip);
                     loadedClips.Add(mainMatClip);
                     loadedClipCache[$"{assetName}_mat"] = mainMatClip;
+                    distinctTexFiles.Add(assetName);
                 }
             }
 
-            // 2. obj_param Associated Animations Resolution
-            ResolvedStageContext stageContext = RelFolderResolver.ResolveAdjacentStageFiles(assetPath, ctx);
-            var matchedParam = RelFolderResolver.FindParamEntryForModel(stageContext.ObjectParams, assetName);
+            // 2. Discover Associated Named Animation Files (Exact: assetName.* and Prefix: assetName_*.*)
+            List<string> animFiles = FindModelAnimationFiles(assetPath);
 
-            HashSet<string> distinctBoneFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            HashSet<string> distinctTexFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            if (matchedParam.HasValue)
+            for (int i = 0; i < animFiles.Count; i++)
             {
-                int objId = matchedParam.Value.Key;
-                ObjectParamEntry paramEntry = matchedParam.Value.Value;
+                string animPath = animFiles[i];
+                if (animPath.Equals(assetPath.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase)) continue;
 
-                RelObjectAnimationComponent animMeta = rootGO.AddComponent<RelObjectAnimationComponent>();
-                animMeta.objID = objId;
+                string rawAnimName = Path.GetFileNameWithoutExtension(animPath);
+                if (loadedClipCache.ContainsKey(rawAnimName)) continue;
 
-                AnimationClip ResolveParamClip(string rawName, bool isMat, string prefix)
+                try
                 {
-                    if (string.IsNullOrEmpty(rawName)) return null;
-                    string key = rawName.Trim();
-                    if (loadedClipCache.TryGetValue(key, out AnimationClip cached)) return cached;
+                    NinjaNext animLoader = new NinjaNext();
+                    animLoader.Load(animPath);
 
-                    string animPath = RelFolderResolver.FindAnimationFilePath(key, stageContext.BaseDirectory, isMat);
-                    if (!string.IsNullOrEmpty(animPath))
+                    string ext = Path.GetExtension(animPath).ToLowerInvariant();
+                    bool isMat = ext is ".xnv" or ".gnv" or ".znv" || 
+                                (animLoader.Data.MaterialMotion != null) || 
+                                (animLoader.Data.Motion?.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) == true);
+
+                    NinjaMotion mot = isMat ? (animLoader.Data.MaterialMotion ?? animLoader.Data.Motion) : animLoader.Data.Motion;
+                    if (mot != null)
                     {
-                        try
+                        ctx.DependsOnSourceAsset(animPath);
+                        string clipId = isMat ? $"MatAnim_{rawAnimName}" : $"Anim_{rawAnimName}";
+                        AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, rawAnimName, settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
+
+                        if (clip != null && loadedClipNames.Add(clip.name))
                         {
-                            NinjaNext animLoader = new NinjaNext();
-                            animLoader.Load(animPath);
-                            NinjaMotion mot = isMat ? (animLoader.Data.MaterialMotion ?? animLoader.Data.Motion) : animLoader.Data.Motion;
-                            if (mot != null)
+                            ctx.AddObjectToAsset(clipId, clip);
+                            loadedClips.Add(clip);
+                            loadedClipCache[rawAnimName] = clip;
+
+                            if (isMat)
                             {
-                                ctx.DependsOnSourceAsset(animPath);
-                                string clipId = $"{prefix}_{key}";
-                                AnimationClip clip = NinjaMotionResolver.ResolveMotion(mot, clipId, settings.Scale, rootGO, nodeTransforms, settings.MeshImportMode);
-                                if (clip != null)
-                                {
-                                    if (loadedClipNames.Add(clip.name))
-                                    {
-                                        ctx.AddObjectToAsset(clipId, clip);
-                                        loadedClips.Add(clip);
-                                    }
-                                    loadedClipCache[key] = clip;
-                                    return clip;
-                                }
+                                distinctTexFiles.Add(rawAnimName);
+                                mainMatClip ??= clip;
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning($"[NinjaAnimatorResolver] Failed loading anim {animPath}: {ex.Message}");
+                            else
+                            {
+                                distinctBoneFiles.Add(rawAnimName);
+                                mainNodeClip ??= clip;
+                            }
+
+                            if (animMeta == null)
+                            {
+                                animMeta = rootGO.AddComponent<RelObjectAnimationComponent>();
+                            }
+
+                            animMeta.animations.Add(new ObjectAnimationEntryData
+                            {
+                                boneAnimName = isMat ? "" : rawAnimName,
+                                texAnimName = isMat ? rawAnimName : "",
+                                boneClip = isMat ? null : clip,
+                                materialClip = isMat ? clip : null
+                            });
                         }
                     }
-                    return null;
                 }
-
-                for (int a = 0; a < paramEntry.Animations.Count; a++)
+                catch (Exception ex)
                 {
-                    var aRef = paramEntry.Animations[a];
-                    if (!string.IsNullOrEmpty(aRef.BoneAnimName)) distinctBoneFiles.Add(aRef.BoneAnimName.Trim());
-                    if (!string.IsNullOrEmpty(aRef.TexAnimName)) distinctTexFiles.Add(aRef.TexAnimName.Trim());
-
-                    AnimationClip bClip = ResolveParamClip(aRef.BoneAnimName, false, "Anim");
-                    AnimationClip mClip = ResolveParamClip(aRef.TexAnimName, true, "MatAnim");
-                    mainNodeClip ??= bClip;
-                    mainMatClip ??= mClip;
-
-                    animMeta.animations.Add(new ObjectAnimationEntryData
-                    {
-                        id1 = aRef.UnknownIdentifier1,
-                        id2 = aRef.UnknownIdentifier2,
-                        boneAnimName = aRef.BoneAnimName,
-                        texAnimName = aRef.TexAnimName,
-                        boneClip = bClip,
-                        materialClip = mClip,
-                        paramFloat1 = aRef.UnknownFloat1,
-                        paramFloat2 = aRef.UnknownFloat2,
-                        paramFloat3 = aRef.UnknownFloat3,
-                        paramFloat4 = aRef.UnknownFloat4,
-                        paramFloat5 = aRef.UnknownFloat5,
-                        paramFloat6 = aRef.UnknownFloat6
-                    });
+                    Debug.LogWarning($"[NinjaAnimatorResolver] Failed loading associated animation {animPath}: {ex.Message}");
                 }
             }
 
@@ -162,19 +218,17 @@ namespace SilentTools
             distinctBoneCount = 0; distinctTexCount = 0;
             if (string.IsNullOrEmpty(assetPath)) return true;
 
-            string assetName = Path.GetFileNameWithoutExtension(assetPath);
-            ResolvedStageContext stageCtx = RelFolderResolver.ResolveAdjacentStageFiles(assetPath);
-            var matchedParam = RelFolderResolver.FindParamEntryForModel(stageCtx.ObjectParams, assetName);
-
-            if (!matchedParam.HasValue) return true;
-
             HashSet<string> distinctBones = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> distinctTexs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var a in matchedParam.Value.Value.Animations)
+            List<string> animFiles = FindModelAnimationFiles(assetPath);
+            for (int i = 0; i < animFiles.Count; i++)
             {
-                if (!string.IsNullOrEmpty(a.BoneAnimName)) distinctBones.Add(a.BoneAnimName.Trim());
-                if (!string.IsNullOrEmpty(a.TexAnimName)) distinctTexs.Add(a.TexAnimName.Trim());
+                string animPath = animFiles[i];
+                string ext = Path.GetExtension(animPath).ToLowerInvariant();
+                string fn = Path.GetFileNameWithoutExtension(animPath);
+                if (ext is ".xnv" or ".gnv" or ".znv") distinctTexs.Add(fn);
+                else distinctBones.Add(fn);
             }
 
             distinctBoneCount = distinctBones.Count;

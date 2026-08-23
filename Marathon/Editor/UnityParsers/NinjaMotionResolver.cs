@@ -335,45 +335,44 @@ namespace SilentTools
                 }
             }
 
-            bool isNoRepeat = (motionData.Type & MotionType.NND_MOTIONTYPE_NOREPEAT) != 0 || 
-                              (motionData.Type & MotionType.NND_MOTIONTYPE_TRIGGER) != 0;
+            bool isExplicitLoop = (motionData.Type & (MotionType.NND_MOTIONTYPE_REPEAT |
+                                                      MotionType.NND_MOTIONTYPE_MIRROR |
+                                                      MotionType.NND_MOTIONTYPE_OFFSET)) != 0;
 
-            bool hasExplicitRepeat = (motionData.Type & (MotionType.NND_MOTIONTYPE_CONSTREPEAT | 
-                                                         MotionType.NND_MOTIONTYPE_REPEAT | 
-                                                         MotionType.NND_MOTIONTYPE_MIRROR | 
-                                                         MotionType.NND_MOTIONTYPE_OFFSET)) != 0;
+            bool isOneShot = (motionData.Type & (MotionType.NND_MOTIONTYPE_NOREPEAT |
+                                                 MotionType.NND_MOTIONTYPE_CONSTREPEAT |
+                                                 MotionType.NND_MOTIONTYPE_TRIGGER)) != 0;
 
-            if (!hasExplicitRepeat && motionData.SubMotions != null)
+            if (!isExplicitLoop && motionData.SubMotions != null)
             {
                 foreach (var sm in motionData.SubMotions)
                 {
                     if (sm == null) continue;
 
-                    if ((sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT | 
-                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT | 
-                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_MIRROR | 
+                    if ((sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT |
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_MIRROR |
                                                  SubMotionInterpolationType.NND_SMOTIPTYPE_OFFSET)) != 0)
                     {
-                        hasExplicitRepeat = true;
+                        isExplicitLoop = true;
                         break;
                     }
 
-                    if ((sm.InterpolationType & SubMotionInterpolationType.NND_SMOTIPTYPE_NOREPEAT) != 0 || 
-                        (sm.InterpolationType & SubMotionInterpolationType.NND_SMOTIPTYPE_TRIGGER) != 0)
+                    if ((sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_NOREPEAT |
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT |
+                                                 SubMotionInterpolationType.NND_SMOTIPTYPE_TRIGGER)) != 0)
                     {
-                        isNoRepeat = true;
+                        isOneShot = true;
                     }
                 }
             }
 
-            bool shouldLoop = hasExplicitRepeat || !isNoRepeat;
+            bool shouldLoop = isExplicitLoop || !isOneShot;
 
             clip.wrapMode = shouldLoop ? WrapMode.Loop : WrapMode.Once;
-
-            var settings = AnimationUtility.GetAnimationClipSettings(clip);
-            settings.loopTime = shouldLoop;
-            settings.loopBlend = shouldLoop;
-            AnimationUtility.SetAnimationClipSettings(clip, settings);
+            var clipSettings = AnimationUtility.GetAnimationClipSettings(clip);
+            clipSettings.loopTime = shouldLoop;
+            clipSettings.loopBlend = shouldLoop;
+            AnimationUtility.SetAnimationClipSettings(clip, clipSettings);
 
             return clip;
         }
