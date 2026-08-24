@@ -4,6 +4,42 @@
 
 ---
 
+## 🌟 Key Features
+
+Note: UnityNN's functionality has been primarily tested with PSU's animated static meshes. Character models, enemy models, and models from other games probably won't work. 
+
+
+- **Full Model & Mesh Importing (`.xno`, `.xna`, `.xnj`, `.gno`, `.zno`):** Imports rigid and skinned 3D mesh hierarchies, bone matrices, inverse bind poses, vertex colors, UVs, normals, and tangents.
+- **BAMS Motion & Animation Resolver (`.xnm`, `.xnv`, `.gnm`, `.znm`):** Converts keyframes into native Unity `AnimationClip` curves mapped to transform hierarchies and material parameters.
+- **NBL / GBL / ZBL Archive Extraction (`.nbl`):** Archive loading and automated folder extraction for compressed PRS/Deflate payload archives.
+- **REL Stage Layout & Collision Loader (`.rel`, `.xnr`):** Imports stage layout object placement, monster spawn waves, fog/lighting environments, and collision geometry.
+- **Particle & Effect File Loader (`.dat` / YPD0):** Generates Unity Shuriken Particle Systems, material blends, and animation sequence cues.
+- **XVR Texture Decoding (`.xvr`, `.xnt`):** Native decoding of XVR texture formats.
+- **Interactive Data Inspector:** Unity Editor window for inspecting node hierarchies, vertex/primitive arrays, material logic, motion tracks, and dumping raw format JSON.
+- **Decompiled Engine Shader:** Custom HLSL shader and Shader GUI reproducing Sega NN multi-texture blending, matcap reflections, vertex color multipliers, and forward lighting passes.
+
+---
+
+## 📦 Installation
+
+### Requirements
+- **Unity 2022.3 LTS** or newer.
+
+### Option 1: Install via Unity Package Manager (Git URL)
+1. In Unity, open the **Package Manager** (`Window > Package Manager`).
+2. Click the **`+`** icon in the top-left corner and select **"Add package from git URL..."**.
+3. Enter the repository URL:
+   ```text
+   https://github.com/s-ilent/UnityNN.git
+
+### Option 2: Install from Local Disk
+1. Download or clone this repository to your local machine.
+2. In Unity, open the **Package Manager** (`Window > Package Manager`).
+3. Click the **`+`** icon and select **"Add package from disk..."**.
+4. Navigate to the repository root and select `package.json`.
+
+---
+
 ## 🚀 Quick Start Guide
 
 1. **Importing Assets:** Drag any supported Sega NN file (`.xno`, `.xnj`, `.xnm`, `.rel`, `.nbl`) into your Unity `Assets/` project folder. UnityNN's `NinjaNextImporter` automatically parses and builds the asset.
@@ -12,26 +48,12 @@
 
 ---
 
-## 🌟 Key Features
-
-Note: UnityNN's functionality has been primarily tested with PSU's animated static meshes. Character models, enemy models, and models from other games probably won't work. 
-
-- **Full Model & Mesh Importing (`.xno`, `.xna`, `.xnj`, `.gno`, `.zno`):** Imports rigid and skinned 3D mesh hierarchies, bone matrices, inverse bind poses, vertex colors, UVs, normals, and tangents.
-- **BAMS Motion & Animation Resolver (`.xnm`, `.xnv`, `.gnm`, `.znm`):** Converts keyframes into native Unity `AnimationClip` curves mapped to transform hierarchies and material parameters.
-- **XVR Texture Decoding (`.xvr`, `.xnt`):** Native decoding of XVR texture formats.
-- **NBL / GBL / ZBL Archive Extraction (`.nbl`):** Archive loading and automated folder extraction for compressed PRS/Deflate payload archives.
-- **REL Stage Layout & Collision Loader (`.rel`, `.xnr`):** Imports stage layout object placement, monster spawn waves, fog/lighting environments, and collision geometry.
-- **Interactive Data Inspector:** Unity Editor window for inspecting node hierarchies, vertex/primitive arrays, material logic, motion tracks, and dumping raw format JSON.
-- **Decompiled Engine Shader:** Custom HLSL shader and Shader GUI reproducing Sega NN multi-texture blending, MatCap reflections, vertex color multipliers, and forward lighting passes.
-
----
-
 ## 👏 Credits & Acknowledgments
 
 ### Sega NN Format Research & Libraries
+- **Agra ([Agrathejagged / TenoraWorks](https://github.com/Agrathejagged/tenora-works))** — Research, documentation, and object definitions for Phantasy Star Universe file formats, `.rel` / `.xnr` stage layout, environment, and mission file structures.
 - **hyperbx / Knuxfan24** — Creators of the **[Marathon](https://github.com/Knuxfan24/Marathon)** library, providing base C# data structures and binary reading/writing logic for Sega NN (`NinjaNext`) assets (`.xno`, `.xnm`, `.xna`, `.xnt`, `.nbl`).
 - **Radfordhound** — Invaluable research and documentation on Sega NN format flags, BAMS angle systems, node types, vertex structures, and submotion interpolation types.
-- **Agra ([Agrathejagged / TenoraWorks](https://github.com/Agrathejagged/tenora-works))** — Research, documentation, and object definitions for Phantasy Star Universe `.rel` / `.xnr` stage layout, environment, and mission file structures.
 
 ### Third-Party Libraries
 - **GimSharp** — Sony GIM texture format decoding library.
@@ -42,4 +64,4 @@ Note: UnityNN's functionality has been primarily tested with PSU's animated stat
 ## 📄 License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
-Made with ✨Gemini 3.6.
+Made with ✨Gemini 3.7.
