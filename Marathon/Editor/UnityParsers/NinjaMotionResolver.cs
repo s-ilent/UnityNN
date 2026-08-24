@@ -11,7 +11,7 @@ namespace UnityNN.Editor
 {
     /// <summary>
     /// Converts Sega NN BAMS/Radian motion tracks into native Unity AnimationClip curves.
-    /// Handles node bone transformations, UV scrolling tracks, and material color animations.
+    /// Handles node bone transformations, multi-layer UV scrolling tracks, and material color animations.
     /// </summary>
     public struct TrackBindingDef
     {
@@ -340,15 +340,28 @@ namespace UnityNN.Editor
 
                 if (isMatMotion)
                 {
-                    var matTargets = ResolveMaterialRendererTargets(sm.NodeIndex, rootGO, nodeHierarchyTargets, objData, importMode);
+                    // Unpack Material Index (low 16 bits) and Layer Index (high 16 bits)
+                    int materialIndex = sm.NodeIndex & 0xFFFF;
+                    int layerIndex = (sm.NodeIndex >> 16) & 0xFFFF;
+
+                    var matTargets = ResolveMaterialRendererTargets(materialIndex, rootGO, nodeHierarchyTargets, objData, importMode);
                     if (matTargets.Count == 0)
                     {
-                        matTargets.Add(new MaterialBindingTarget { TargetPath = "", MaterialSlot = 0 });
+                        matTargets.Add(new MaterialBindingTarget { TargetPath = "", MaterialSlot = materialIndex });
                     }
 
                     foreach (var target in matTargets)
                     {
-                        CollectSubMotionSegments(sm, target.TargetPath, propertySegments, timeScale, scale, effectiveMotionType, target.MaterialSlot);
+                        CollectSubMotionSegments(
+                            sm,
+                            target.TargetPath,
+                            propertySegments,
+                            timeScale,
+                            scale,
+                            effectiveMotionType,
+                            target.MaterialSlot,
+                            layerIndex
+                        );
                     }
                 }
                 else
@@ -357,10 +370,11 @@ namespace UnityNN.Editor
                         ? nodeHierarchyTargets[sm.NodeIndex]
                         : sm.NodeIndex.ToString("0000");
 
-                    CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, effectiveMotionType, 0);
+                    CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, effectiveMotionType, 0, 0);
                 }
             }
 
+            // Fill in missing companion channels (.x, .y tiling scale) to ensure full float4 Vector4 bindings in Unity
             FillMissingCompanionChannels(propertySegments, nodeTransforms, nodeHierarchyTargets, maxTime);
 
             foreach (var kvp in propertySegments)
@@ -550,26 +564,41 @@ namespace UnityNN.Editor
             return $"materials.Array.data[{materialSlot}]." + basePropName.Substring("material.".Length);
         }
 
-        private static bool TryMatchBinding(string propertyName, out TrackBindingDef matchedDef, out int materialSlot)
+        private static string GetLayerPropertyName(string basePropName, int layerIndex)
+        {
+            if (layerIndex == 1) return basePropName.Replace("_MainTex_ST", "_MainTex2_ST");
+            if (layerIndex == 2) return basePropName.Replace("_MainTex_ST", "_MainTex3_ST");
+            return basePropName;
+        }
+
+        private static bool TryMatchBinding(string propertyName, out TrackBindingDef matchedDef, out int materialSlot, out int layerIndex)
         {
             matchedDef = default;
             materialSlot = 0;
+            layerIndex = 0;
+
+            if (propertyName.Contains("_MainTex2_ST")) layerIndex = 1;
+            else if (propertyName.Contains("_MainTex3_ST")) layerIndex = 2;
+
+            string normalizedProp = propertyName
+                .Replace("_MainTex2_ST", "_MainTex_ST")
+                .Replace("_MainTex3_ST", "_MainTex_ST");
 
             foreach (var b in AllTrackBindings)
             {
-                if (b.PropertyName == propertyName)
+                if (b.PropertyName == normalizedProp)
                 {
                     matchedDef = b;
                     materialSlot = 0;
                     return true;
                 }
 
-                if (b.CategoryMask == 16 && propertyName.StartsWith("materials.Array.data["))
+                if (b.CategoryMask == 16 && normalizedProp.StartsWith("materials.Array.data["))
                 {
-                    int closeBracket = propertyName.IndexOf(']');
-                    if (closeBracket > 21 && int.TryParse(propertyName.Substring(21, closeBracket - 21), out int slot))
+                    int closeBracket = normalizedProp.IndexOf(']');
+                    if (closeBracket > 21 && int.TryParse(normalizedProp.Substring(21, closeBracket - 21), out int slot))
                     {
-                        string suffix = propertyName.Substring(closeBracket + 2);
+                        string suffix = normalizedProp.Substring(closeBracket + 2);
                         if (b.PropertyName.EndsWith(suffix))
                         {
                             matchedDef = b;
@@ -591,7 +620,8 @@ namespace UnityNN.Editor
             float timeScale,
             float scale,
             MotionType parentType,
-            int materialSlot = 0)
+            int materialSlot = 0,
+            int layerIndex = 0)
         {
             uint flags = (uint)subMotion.Type;
             uint cat = (uint)parentType & 31U;
@@ -604,7 +634,11 @@ namespace UnityNN.Editor
                 {
                     if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
                     {
-                        string propName = binding.CategoryMask == 16 ? GetMaterialPropertyName(binding.PropertyName, materialSlot) : binding.PropertyName;
+                        string layerProp = GetLayerPropertyName(binding.PropertyName, layerIndex);
+                        string propName = binding.CategoryMask == 16 
+                            ? GetMaterialPropertyName(layerProp, materialSlot) 
+                            : binding.PropertyName;
+
                         PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
 
                         foreach (var objKf in subMotion.Keyframes)
@@ -664,7 +698,11 @@ namespace UnityNN.Editor
             {
                 if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
                 {
-                    string propName = binding.CategoryMask == 16 ? GetMaterialPropertyName(binding.PropertyName, materialSlot) : binding.PropertyName;
+                    string layerProp = GetLayerPropertyName(binding.PropertyName, layerIndex);
+                    string propName = binding.CategoryMask == 16 
+                        ? GetMaterialPropertyName(layerProp, materialSlot) 
+                        : binding.PropertyName;
+
                     PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
 
                     foreach (var kf in subMotion.Keyframes)
@@ -708,10 +746,10 @@ namespace UnityNN.Editor
 
             foreach (var key in existingKeys)
             {
-                if (!TryMatchBinding(key.PropertyName, out TrackBindingDef matchedBinding, out int slot))
+                if (!TryMatchBinding(key.PropertyName, out TrackBindingDef matchedBinding, out int slot, out int layerIndex))
                     continue;
 
-                string groupKey = $"{key.TargetPath}|{key.ComponentType.Name}|{matchedBinding.GroupKey}|slot_{slot}";
+                string groupKey = $"{key.TargetPath}|{key.ComponentType.Name}|{matchedBinding.GroupKey}|slot_{slot}|layer_{layerIndex}";
                 if (!processedGroups.Add(groupKey)) continue;
 
                 Transform nodeTr = FindNodeTransform(key.TargetPath, nodeTransforms, nodeHierarchyTargets);
@@ -720,8 +758,10 @@ namespace UnityNN.Editor
                 {
                     if (companion.GroupKey == matchedBinding.GroupKey && companion.ComponentType == key.ComponentType)
                     {
-                        string compPropName = GetMaterialPropertyName(companion.PropertyName, slot);
+                        string layerProp = GetLayerPropertyName(companion.PropertyName, layerIndex);
+                        string compPropName = GetMaterialPropertyName(layerProp, slot);
                         PropertyKey channelKey = new PropertyKey(key.TargetPath, companion.ComponentType, compPropName);
+
                         if (!propertySegments.ContainsKey(channelKey))
                         {
                             float defVal = GetDefaultChannelValue(companion, nodeTr);
