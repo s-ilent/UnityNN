@@ -149,7 +149,7 @@ namespace UnityNN.Editor
                     DrawMetricRow("Particle Presets", $"{partData.Entries.Count}");
                 }
             }
-            
+
             if (m_Context.IsParticleAsset)
             {
                 var pData = m_Context.ParticleEffectData;
@@ -162,6 +162,19 @@ namespace UnityNN.Editor
                 DrawMetricRow("External Bones", $"{pData.ExternalBones.Count}");
             }
 
+            if (m_Context.IsNblAsset)
+            {
+                var nbl = m_Context.NblData;
+                DrawMetricRow("Asset Type", "NBL Archive");
+                DrawMetricRow("Total Chunks", $"{nbl.Chunks.Count}");
+                DrawMetricRow("Total Files", $"{nbl.Entries.Count}");
+                for (int c = 0; c < nbl.Chunks.Count; c++)
+                {
+                    var ch = nbl.Chunks[c];
+                    DrawMetricRow($"Chunk [{c}]", $"{ch.ChunkID} ({ch.Entries.Count} files)");
+                }
+            }
+            
             EditorGUILayout.Space(6);
             if (GUILayout.Button("Dump Category JSON", GUILayout.Height(26)))
             {

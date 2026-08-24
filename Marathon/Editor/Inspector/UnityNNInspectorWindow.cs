@@ -24,6 +24,7 @@ namespace UnityNN.Editor
         public object RelData { get; set; }
         public RelFileType RelType { get; set; } = RelFileType.Unknown;
         public Marathon.Formats.Particle.ParticleEffectFile ParticleEffectData { get; set; }
+        public Marathon.Formats.Archive.NblArchive NblData { get; set; }
 
         public ChunkSourceInfo ObjectSource { get; set; } = new ChunkSourceInfo();
         public ChunkSourceInfo NodeMotionSource { get; set; } = new ChunkSourceInfo();
@@ -31,10 +32,12 @@ namespace UnityNN.Editor
         public ChunkSourceInfo TextureListSource { get; set; } = new ChunkSourceInfo();
         public ChunkSourceInfo NodeNameListSource { get; set; } = new ChunkSourceInfo();
         public ChunkSourceInfo RelSource { get; set; } = new ChunkSourceInfo();
+        public ChunkSourceInfo NblSource { get; set; } = new ChunkSourceInfo();
 
         public bool IsNinjaAsset => NinjaData != null && NinjaData.Data != null;
         public bool IsRelAsset => RelData != null;
         public bool IsParticleAsset => ParticleEffectData != null && ParticleEffectData.IsValid;
+        public bool IsNblAsset => NblData != null && NblData.Entries.Count > 0;
     }
 
     public partial class UnityNNInspectorWindow : EditorWindow
@@ -292,6 +295,28 @@ namespace UnityNN.Editor
                     Debug.LogWarning($"Could not load Particle Effect asset {path}:\n{ex}");
                 }
             }
+            else if (ext == ".nbl" || ext == ".gbl" || ext == ".zbl")
+            {
+                try
+                {
+                    using (FileStream fs = File.OpenRead(path))
+                    {
+                        var nbl = Marathon.Formats.Archive.NblArchive.Load(fs);
+                        m_Context.NblData = nbl;
+                        if (nbl.Entries.Count > 0)
+                        {
+                            m_Context.NblSource.IsPresent = true;
+                            m_Context.NblSource.IsLocal = true;
+                            m_Context.NblSource.SourceDescription = $"Local ({ext})";
+                            m_Context.NblSource.Details = $"{nbl.Chunks.Count} chunks, {nbl.Entries.Count} files";
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"Could not load NBL archive {path}:\n{ex}");
+                }
+            }
 
             EnsureActiveTab();
         }
@@ -371,6 +396,10 @@ namespace UnityNN.Editor
             else if (m_Context.IsParticleAsset)
             {
                 DrawParticleTab();
+            }
+            else if (m_Context.IsNblAsset)
+            {
+                DrawNblTab();
             }
 
             if (m_ShowJsonOutput && !string.IsNullOrEmpty(m_DumpedJsonText))

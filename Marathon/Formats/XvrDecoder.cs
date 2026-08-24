@@ -18,61 +18,109 @@ namespace UnityNN
 
         public static Texture2D DecodeXvrToTexture2D(byte[] header, byte[] rawData)
         {
-            if (header == null || header.Length < 0x20 || rawData == null) return null;
+            if (header == null || header.Length < 0x20 || rawData == null || rawData.Length == 0) return null;
 
             byte pixelFormat = header[0x18];
             byte pixelFlags = header[0x19];
             int width = BitConverter.ToInt16(header, 0x1C);
             int height = BitConverter.ToInt16(header, 0x1E);
 
-            if (width <= 0 || height <= 0) return null;
+            // Guard against endian flipped dimensions
+            if (width < 0 || height < 0)
+            {
+                width = (short)((header[0x1C] << 8) | header[0x1D]);
+                height = (short)((header[0x1E] << 8) | header[0x1F]);
+            }
+
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096) return null;
 
             int startingOffset = 0;
-            if (BitConverter.ToInt32(rawData, 0) == 0x840001)
+
+            // Check if rawData starts with 0x00840001 descriptor (NBL sub-entry payload)
+            if (rawData.Length >= 4 && BitConverter.ToInt32(rawData, 0) == 0x840001)
             {
-                startingOffset = BitConverter.ToInt32(rawData, 0x14) == 0 ? 0x7E0 : 0x20;
+                startingOffset = 0x20;
+            }
+            // Check if rawData starts with GBIX / PVRT (standalone file)
+            else if (rawData.Length >= 0x40 &&
+                     (header[0] == 'G' && header[1] == 'B' && header[2] == 'I' && header[3] == 'X') ||
+                     (header[0x10] == 'P' && header[0x11] == 'V' && header[0x12] == 'R' && header[0x13] == 'T'))
+            {
+                if (BitConverter.ToInt32(rawData, 0x20) == 0x840001)
+                {
+                    startingOffset = 0x40;
+                }
+                else
+                {
+                    startingOffset = 0x20;
+                }
+            }
+
+            if (startingOffset >= rawData.Length)
+            {
+                startingOffset = 0;
             }
 
             int dataLen = rawData.Length - startingOffset;
+            if (dataLen <= 0) return null;
+
             byte[] pixelBytes = new byte[dataLen];
             Array.Copy(rawData, startingOffset, pixelBytes, 0, dataLen);
 
-            // DXT1 Compression
-            if (pixelFlags == 0x73 || pixelFlags == 0x74)
+            try
             {
-                Texture2D tex = new Texture2D(width, height, TextureFormat.DXT1, false);
-                tex.LoadRawTextureData(pixelBytes);
-                tex.Apply();
-                return tex;
-            }
-            // DXT3 Compression
-            if (pixelFlags == 0x77 || pixelFlags == 0x78 || pixelFlags == 0x75 || pixelFlags == 0x76)
-            {
-                Texture2D tex = new Texture2D(width, height, TextureFormat.DXT5, false);
-                tex.LoadRawTextureData(pixelBytes);
-                tex.Apply();
-                return tex;
-            }
-            // DXT5 Compression
-            if (pixelFlags == 0x7B || pixelFlags == 0x7C)
-            {
-                Texture2D tex = new Texture2D(width, height, TextureFormat.DXT5, false);
-                tex.LoadRawTextureData(pixelBytes);
-                tex.Apply();
-                return tex;
-            }
+                // DXT1 Compression (0x73, 0x74)
+                if (pixelFlags == 0x73 || pixelFlags == 0x74)
+                {
+                    int minBytes = Mathf.Max(8, (width * height) / 2);
+                    if (pixelBytes.Length >= minBytes)
+                    {
+                        Texture2D tex = new Texture2D(width, height, TextureFormat.DXT1, false);
+                        byte[] dxtData = pixelBytes.Length == minBytes ? pixelBytes : SliceBytes(pixelBytes, minBytes);
+                        tex.LoadRawTextureData(dxtData);
+                        tex.Apply();
+                        return tex;
+                    }
+                }
 
-            // Unswizzle Morton-order Raster Formats (ARGB8888, ARGB1555, RGB565, ARGB4444)
-            byte[] rgbaPixels = UnswizzleRaster(pixelBytes, width, height, pixelFormat);
-            if (rgbaPixels != null)
+                // DXT3 Compression (0x77, 0x78, 0x75, 0x76) / DXT5 Compression (0x7B, 0x7C)
+                if (pixelFlags == 0x77 || pixelFlags == 0x78 || pixelFlags == 0x75 || pixelFlags == 0x76 ||
+                    pixelFlags == 0x7B || pixelFlags == 0x7C || pixelFlags == 0x79 || pixelFlags == 0x7A)
+                {
+                    int minBytes = Mathf.Max(16, width * height);
+                    if (pixelBytes.Length >= minBytes)
+                    {
+                        Texture2D tex = new Texture2D(width, height, TextureFormat.DXT5, false);
+                        byte[] dxtData = pixelBytes.Length == minBytes ? pixelBytes : SliceBytes(pixelBytes, minBytes);
+                        tex.LoadRawTextureData(dxtData);
+                        tex.Apply();
+                        return tex;
+                    }
+                }
+
+                // Unswizzle Morton-order Raster Formats
+                byte[] rgbaPixels = UnswizzleRaster(pixelBytes, width, height, pixelFormat);
+                if (rgbaPixels != null)
+                {
+                    Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                    tex.LoadRawTextureData(rgbaPixels);
+                    tex.Apply();
+                    return tex;
+                }
+            }
+            catch (Exception ex)
             {
-                Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
-                tex.LoadRawTextureData(rgbaPixels);
-                tex.Apply();
-                return tex;
+                Debug.LogWarning($"[XvrDecoder] Texture decode failed ({width}x{height}, flags: 0x{pixelFlags:X2}): {ex.Message}");
             }
 
             return null;
+        }
+
+        private static byte[] SliceBytes(byte[] source, int length)
+        {
+            byte[] dest = new byte[length];
+            Array.Copy(source, 0, dest, 0, Math.Min(source.Length, length));
+            return dest;
         }
 
         private static byte[] UnswizzleRaster(byte[] swizzledData, int width, int height, byte pixelFormat)
@@ -83,7 +131,7 @@ namespace UnityNN
             byte[] rgba = new byte[width * height * 4];
             int bpp = (pixelFormat == 6 || pixelFormat == 7 || pixelFormat == 20 || pixelFormat == 21) ? 4 : 2;
 
-            for (int j = 0; (j < width * height) && (j * bpp < swizzledData.Length); j++)
+            for (int j = 0; (j < width * height) && (j * bpp + bpp <= swizzledData.Length); j++)
             {
                 int u = 0, v = 0;
                 int origCoord = j;
@@ -97,6 +145,8 @@ namespace UnityNN
                 {
                     int dstIdx = (u * width + v) * 4;
                     int srcIdx = j * bpp;
+
+                    if (dstIdx + 3 >= rgba.Length) continue;
 
                     if (bpp == 4) // ARGB8888
                     {
