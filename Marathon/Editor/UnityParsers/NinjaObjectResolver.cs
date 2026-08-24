@@ -86,6 +86,18 @@ namespace UnityNN.Editor
             return rootGO;
         }
 
+        public static bool HasSkinning(NinjaObject objData)
+        {
+            if (objData?.VertexLists == null) return false;
+            for (int i = 0; i < objData.VertexLists.Count; i++)
+            {
+                var vl = objData.VertexLists[i];
+                if (vl?.BoneMatrixIndices != null && vl.BoneMatrixIndices.Count > 0)
+                    return true;
+            }
+            return false;
+        }
+        
         #region Mode 1: Single Skinned Mesh
         private static void BuildSingleSkinnedMesh(
             NinjaObject objData,
@@ -149,6 +161,13 @@ namespace UnityNN.Editor
             NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
+            // If the asset contains skinned vertex lists, build a unified skeleton SkinnedMesh
+            if (HasSkinning(objData))
+            {
+                BuildSingleSkinnedMesh(objData, rootGO, allNodeTransforms, materials, assetName, settings, ctx);
+                return;
+            }
+
             for (int n = 0; n < objData.Nodes.Count; n++)
             {
                 Transform nodeTr = allNodeTransforms[n];
@@ -182,12 +201,12 @@ namespace UnityNN.Editor
                         targetGO.transform.SetParent(nodeTr, false);
                     }
 
-                    BuildNodeMeshSection(objData, rootGO, nodeTr, targetGO, sets, matIdx, n, materials, assetName, settings, ctx);
+                    BuildRigidNodeMeshSection(objData, rootGO, nodeTr, targetGO, sets, matIdx, n, materials, assetName, settings, ctx);
                 }
             }
         }
 
-        private static void BuildNodeMeshSection(
+        private static void BuildRigidNodeMeshSection(
             NinjaObject objData,
             GameObject rootGO,
             Transform nodeTr,
@@ -200,48 +219,21 @@ namespace UnityNN.Editor
             NinjaImportSettings settings,
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
-            bool isSkinned = false;
-            HashSet<int> boneSet = new HashSet<int>();
             int estimatedVerts = 0;
-
             foreach (var ms in meshSets)
             {
                 if (ms.VertexListIndex >= 0 && ms.VertexListIndex < objData.VertexLists.Count)
                 {
-                    var vl = objData.VertexLists[ms.VertexListIndex];
-                    estimatedVerts += vl.Vertices.Count;
-                    if (vl.BoneMatrixIndices != null && vl.BoneMatrixIndices.Count > 0)
-                    {
-                        isSkinned = true;
-                        foreach (int b in vl.BoneMatrixIndices) boneSet.Add(b);
-                    }
+                    estimatedVerts += objData.VertexLists[ms.VertexListIndex].Vertices.Count;
                 }
             }
 
-            List<int> localPalette = new List<int>(boneSet);
-            Dictionary<int, int> globalToLocal = new Dictionary<int, int>();
-            for (int b = 0; b < localPalette.Count; b++)
-            {
-                globalToLocal[localPalette[b]] = b;
-            }
-
-            Matrix4x4? nodeXform = isSkinned ? (Matrix4x4?)null : nodeTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
+            Matrix4x4 nodeXform = nodeTr.worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
             MeshBuffer buffer = new MeshBuffer(estimatedVerts);
 
             foreach (var ms in meshSets)
             {
-                var vList = objData.VertexLists[ms.VertexListIndex];
-                Func<byte, int> remap = isSkinned ? (b) => {
-                    if (vList.BoneMatrixIndices != null && b < vList.BoneMatrixIndices.Count)
-                    {
-                        int g = vList.BoneMatrixIndices[b];
-                        if (globalToLocal.TryGetValue(g, out int l)) return l;
-                    }
-                    return 0;
-                } : (Func<byte, int>)null;
-
-                int fallbackLocal = globalToLocal.TryGetValue(nodeIdx, out int lf) ? lf : 0;
-                buffer.AppendMeshSet(objData, ms, settings.Scale, nodeXform, remap, fallbackLocal, 0);
+                buffer.AppendMeshSet(objData, ms, settings.Scale, nodeXform, null, 0, 0);
             }
 
             Mesh mesh = buffer.BuildMesh($"{assetName}_Node_{nodeIdx}_Mat_{matIdx}");
@@ -250,30 +242,8 @@ namespace UnityNN.Editor
             Material assignedMat = GetMaterialOrStandard(matIdx, materials);
             if (ctx != null) ctx.AddObjectToAsset($"Mesh_Node_{nodeIdx}_Mat_{matIdx}", mesh);
 
-            if (isSkinned)
-            {
-                Transform[] localBones = new Transform[localPalette.Count];
-                Matrix4x4[] localBinds = new Matrix4x4[localPalette.Count];
-                for (int b = 0; b < localPalette.Count; b++)
-                {
-                    localBones[b] = rootGO.transform.GetChild(localPalette[b]);
-                    localBinds[b] = localBones[b].worldToLocalMatrix * rootGO.transform.localToWorldMatrix;
-                }
-                mesh.bindposes = localBinds;
-                mesh.RecalculateBounds();
-
-                SkinnedMeshRenderer smr = targetGO.AddComponent<SkinnedMeshRenderer>();
-                smr.sharedMesh = mesh;
-                smr.bones = localBones;
-                smr.rootBone = nodeTr;
-                smr.sharedMaterial = assignedMat;
-            }
-            else
-            {
-                mesh.RecalculateBounds();
-                targetGO.AddComponent<MeshFilter>().sharedMesh = mesh;
-                targetGO.AddComponent<MeshRenderer>().sharedMaterial = assignedMat;
-            }
+            targetGO.AddComponent<MeshFilter>().sharedMesh = mesh;
+            targetGO.AddComponent<MeshRenderer>().sharedMaterial = assignedMat;
 
             if (settings.GenerateMeshColliders)
             {
