@@ -268,10 +268,11 @@ namespace UnityNN.Editor
                 NinjaMotion mot = loader.Data.Motion ?? loader.Data.MaterialMotion;
                 if (mot != null)
                 {
+                    NinjaObject associatedObj = null;
                     string[] targets = (settings.NodeHierarchyTarget != null && settings.NodeHierarchyTarget.Length > 0)
                         ? settings.NodeHierarchyTarget
-                        : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx, out NinjaObject associatedObj);
-
+                        : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx, out associatedObj);
+            
                     AnimationClip clip = NinjaMotionResolver.ResolveMotion(
                         mot,
                         assetName,
@@ -280,7 +281,7 @@ namespace UnityNN.Editor
                         settings.MeshImportMode,
                         associatedObj
                     );
-
+            
                     if (clip != null)
                     {
                         ctx.AddObjectToAsset("main", clip, icon);
