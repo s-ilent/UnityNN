@@ -69,15 +69,15 @@ namespace UnityNN.Editor
         public static NinjaImportSettings Default => new NinjaImportSettings();
     }
 
-    [ScriptedImporter(2, new[] {
+    [ScriptedImporter(3, new[] {
         // Xbox / PC formats
-        "xno", "xna", "xnj", "xnm", "xnv", "xnt", "xnn", "xnc", "xnl", "xnd", "xng", "xne", "xni", "xnf", "xnr", "rel", "nbl",
+        "xno", "xna", "xnj", "xnm", "xnv", "xnt", "xnn", "xnc", "xnl", "xnd", "xng", "xne", "xni", "xnf", "xnr", 
         // GameCube / Wii formats
         "gno", "gna", "gnj", "gnm", "gnv", "gnt", "gnn", "gnc", "gnl", "gnr", "gbl",
         // PS2 / PSP formats
         "zno", "znm", "znt", "znn", "znr", "zbl",
-        // PSU particle format.
-        "dat"
+        // PSU-specific formats
+        "rel", "nbl","dat"
     })]
     public class NinjaNextImporter : ScriptedImporter
     {
@@ -129,16 +129,77 @@ namespace UnityNN.Editor
             string assetName = Path.GetFileNameWithoutExtension(ctx.assetPath);
             Texture2D icon = NinjaIconResolver.GetIconForExtension(ext);
             NinjaImportSettings settings = GetSettings();
-            
-            // Particle Effect Format (.dat / YPD0) -> Marathon.Formats.Particle
-            if (ext == ".dat")
+
+            switch (ext)
+            {
+                case ".nbl":
+                case ".gbl":
+                case ".zbl":
+                    ImportArchive(ctx, assetName, ext, icon);
+                    break;
+
+                case ".dat":
+                    ImportParticleEffect(ctx, assetName, settings, icon);
+                    break;
+
+                case ".rel":
+                case ".xnr":
+                case ".gnr":
+                case ".znr":
+                    ImportRelStage(ctx, assetName, settings, icon);
+                    break;
+
+                default:
+                    ImportNinjaAsset(ctx, assetName, ext, settings, icon);
+                    break;
+            }
+        }
+
+        #region Format Importers
+
+        private void ImportArchive(AssetImportContext ctx, string assetName, string ext, Texture2D icon)
+        {
+            try
+            {
+                using (FileStream fs = File.OpenRead(ctx.assetPath))
+                {
+                    NblArchive nbl = NblArchive.Load(fs);
+                    StringBuilder sb = new StringBuilder();
+                    sb.AppendLine($"NBL Archive: {assetName}{ext}");
+                    sb.AppendLine($"Chunks: {nbl.Chunks.Count} | Total Files: {nbl.Entries.Count}\n");
+
+                    for (int c = 0; c < nbl.Chunks.Count; c++)
+                    {
+                        var ch = nbl.Chunks[c];
+                        sb.AppendLine($"Chunk [{c}] {ch.ChunkID} (v0x{ch.FileVersion:X4}): {ch.Entries.Count} files");
+                        for (int e = 0; e < ch.Entries.Count; e++)
+                        {
+                            var entry = ch.Entries[e];
+                            sb.AppendLine($"  - [{e:000}] {entry.Header.FileName ?? "<unnamed>"} ({entry.Header.FileSize} bytes)");
+                        }
+                    }
+
+                    TextAsset summaryAsset = new TextAsset(sb.ToString());
+                    ctx.AddObjectToAsset("main", summaryAsset, icon);
+                    ctx.SetMainObject(summaryAsset);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NinjaNextImporter] Failed to load archive {ctx.assetPath}:\n{ex}");
+            }
+        }
+
+        private void ImportParticleEffect(AssetImportContext ctx, string assetName, NinjaImportSettings settings, Texture2D icon)
+        {
+            try
             {
                 using (FileStream fs = File.OpenRead(ctx.assetPath))
                 {
                     ParticleEffectFile particleFile = new ParticleEffectFile();
                     particleFile.Load(fs);
-    
-                    if (particleFile.Emitters.Count > 0 || particleFile.Behaviors.Count > 0 || particleFile.ResourceFiles.Count > 0)
+
+                    if (particleFile.IsValid)
                     {
                         GameObject effectRoot = ParticleEffectResolver.ResolveParticleEffect(particleFile, assetName, settings.Scale, ctx, settings);
                         if (effectRoot != null)
@@ -150,70 +211,48 @@ namespace UnityNN.Editor
                     }
                 }
             }
-
-            // 1. REL / XNR Stage Layout & Environment Files (.rel, .xnr, .gnr, .znr)
-            if (ext is ".rel" or ".xnr" or ".gnr" or ".znr")
+            catch (Exception ex)
             {
-                try
-                {
-                    byte[] rawData = File.ReadAllBytes(ctx.assetPath);
-                    RelFileType relType;
-                    object parsedRel = RelResolver.ParseRelBytes(rawData, Path.GetFileName(ctx.assetPath), out relType);
-
-                    if (parsedRel != null)
-                    {
-                        GameObject relRoot = RelResolver.ResolveRelAsset(parsedRel, relType, assetName, settings.Scale, ctx);
-                        if (relRoot != null)
-                        {
-                            ctx.AddObjectToAsset("main", relRoot, icon);
-                            ctx.SetMainObject(relRoot);
-                            return;
-                        }
-                    }
-
-                    Debug.LogError($"Failed to parse REL/XNR file {ctx.assetPath}: No valid layout or collision data generated.");
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"Failed to parse REL/XNR file {ctx.assetPath}:\n{ex}");
-                    return;
-                }
+                Debug.LogError($"[NinjaNextImporter] Failed to load particle effect {ctx.assetPath}:\n{ex}");
             }
+        }
 
-            // 2. Binary Loader (.xno, .xna, .xnj, .xnm, .xnt, .nbl, etc.)
-            NinjaNext loader = new NinjaNext();
+        private void ImportRelStage(AssetImportContext ctx, string assetName, NinjaImportSettings settings, Texture2D icon)
+        {
             try
             {
-                if (ext is ".nbl" or ".gbl" or ".zbl")
+                byte[] rawData = File.ReadAllBytes(ctx.assetPath);
+                object parsedRel = RelResolver.ParseRelBytes(rawData, Path.GetFileName(ctx.assetPath), out RelFileType relType);
+
+                if (parsedRel != null)
                 {
-                    using (FileStream fs = File.OpenRead(ctx.assetPath))
+                    GameObject relRoot = RelResolver.ResolveRelAsset(parsedRel, relType, assetName, settings.Scale, ctx);
+                    if (relRoot != null)
                     {
-                        NblArchive nbl = NblArchive.Load(fs);
-                        StringBuilder sb = new StringBuilder();
-                        sb.AppendLine($"NBL Archive: {assetName}{ext}");
-                        sb.AppendLine($"Chunks: {nbl.Chunks.Count} | Total Files: {nbl.Entries.Count}\n");
-
-                        for (int c = 0; c < nbl.Chunks.Count; c++)
-                        {
-                            var ch = nbl.Chunks[c];
-                            sb.AppendLine($"Chunk [{c}] {ch.ChunkID}: {ch.Entries.Count} files");
-                            foreach (var e in ch.Entries)
-                            {
-                                sb.AppendLine($"  - {e.Header.FileName ?? "<unnamed>"} ({e.Header.FileSize} bytes)");
-                            }
-                        }
-
-                        TextAsset summaryAsset = new TextAsset(sb.ToString());
-                        ctx.AddObjectToAsset("main", summaryAsset, icon);
-                        ctx.SetMainObject(summaryAsset);
+                        ctx.AddObjectToAsset("main", relRoot, icon);
+                        ctx.SetMainObject(relRoot);
                         return;
                     }
                 }
+
+                Debug.LogError($"[NinjaNextImporter] Failed to parse REL/XNR file {ctx.assetPath}: No valid layout or collision data generated.");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"Failed to load NinjaNext file {ctx.assetPath}:\n{ex}");
+                Debug.LogError($"[NinjaNextImporter] Failed to parse REL/XNR file {ctx.assetPath}:\n{ex}");
+            }
+        }
+
+        private void ImportNinjaAsset(AssetImportContext ctx, string assetName, string ext, NinjaImportSettings settings, Texture2D icon)
+        {
+            NinjaNext loader = new NinjaNext();
+            try
+            {
+                loader.Load(ctx.assetPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[NinjaNextImporter] Failed to load NinjaNext file {ctx.assetPath}:\n{ex}");
                 return;
             }
 
@@ -222,18 +261,16 @@ namespace UnityNN.Editor
             // Apply texture overrides if an XNT TextureList exists
             ApplyTextureOverrides(loader.Data.TextureList, settings.TextureRemaps);
 
-            // 3. Standalone Motion / Animation Assets (.xnm, .xnv, .gnm, .znm)
+            // 1. Standalone Motion / Animation Assets (.xnm, .xnv, .gnm, .znm) without 3D mesh
             bool isStandaloneMotion = (ext is ".xnm" or ".xnv" or ".gnm" or ".gnv" or ".znm") && loader.Data.Object == null;
-
             if (isStandaloneMotion)
             {
                 NinjaMotion mot = loader.Data.Motion ?? loader.Data.MaterialMotion;
                 if (mot != null)
                 {
-                    NinjaObject associatedObj = null;
                     string[] targets = (settings.NodeHierarchyTarget != null && settings.NodeHierarchyTarget.Length > 0)
                         ? settings.NodeHierarchyTarget
-                        : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx, out associatedObj);
+                        : NinjaMotionResolver.ResolveNodeHierarchyTargets(ctx.assetPath, ctx, out NinjaObject associatedObj);
 
                     AnimationClip clip = NinjaMotionResolver.ResolveMotion(
                         mot,
@@ -253,7 +290,7 @@ namespace UnityNN.Editor
                 }
             }
 
-            // 4. Model & Hierarchy Construction
+            // 2. 3D Model Construction (.xnj, .xno, .xna, .gno, .zno)
             GameObject rootGO = null;
             List<Transform> nodeTransforms = new List<Transform>();
 
@@ -269,7 +306,7 @@ namespace UnityNN.Editor
                 );
             }
 
-            // 5. Camera / Light Objects (.xnc, .xnl, etc.)
+            // 3. Camera / Light Objects (.xnc, .xnl, etc.)
             if (rootGO == null && loader.Data.Camera != null)
             {
                 rootGO = new GameObject(assetName);
@@ -282,7 +319,7 @@ namespace UnityNN.Editor
                 lightComp.type = UnityEngine.LightType.Directional;
             }
 
-            // 6. Animation Setup & Controller Resolution
+            // 4. Animation Setup & Controller Resolution (includes embedded XNJ motions)
             if (rootGO != null)
             {
                 if (settings.ImportAnimation)
@@ -303,11 +340,15 @@ namespace UnityNN.Editor
                 return;
             }
 
-            // 7. Non-instantiable Support / Metadata Assets (.xnt, .xnn, etc.)
+            // 5. Non-instantiable Support / Metadata Assets (.xnt, .xnn, etc.)
             TextAsset textAsset = CreateSummaryTextAsset(loader.Data, assetName, ext);
             ctx.AddObjectToAsset("main", textAsset, icon);
             ctx.SetMainObject(textAsset);
         }
+
+        #endregion
+
+        #region Helpers
 
         private void ApplyTextureOverrides(NinjaTextureList texList, List<TextureRemapEntry> remaps)
         {
@@ -368,5 +409,7 @@ namespace UnityNN.Editor
 
             return new TextAsset(sb.ToString());
         }
+
+        #endregion
     }
 }
