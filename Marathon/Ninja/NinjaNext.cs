@@ -64,8 +64,7 @@ namespace Marathon.Formats.Mesh.Ninja
                 (motion.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL ||
                 chunkID.EndsWith("NV", StringComparison.OrdinalIgnoreCase) ||
                 chunkID.EndsWith("MV", StringComparison.OrdinalIgnoreCase) ||
-                chunkID.EndsWith("MT", StringComparison.OrdinalIgnoreCase) ||
-                chunkID.EndsWith("MA", StringComparison.OrdinalIgnoreCase))
+                chunkID.EndsWith("MT", StringComparison.OrdinalIgnoreCase))
             {
                 data.MaterialMotion = motion;
             }
