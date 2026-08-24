@@ -190,12 +190,25 @@ namespace UnityNN.Editor
                     using (FileStream fs = File.OpenRead(ctx.assetPath))
                     {
                         NblArchive nbl = NblArchive.Load(fs);
-                        loader.Data = nbl.ToFormatData();
+                        StringBuilder sb = new StringBuilder();
+                        sb.AppendLine($"NBL Archive: {assetName}{ext}");
+                        sb.AppendLine($"Chunks: {nbl.Chunks.Count} | Total Files: {nbl.Entries.Count}\n");
+
+                        for (int c = 0; c < nbl.Chunks.Count; c++)
+                        {
+                            var ch = nbl.Chunks[c];
+                            sb.AppendLine($"Chunk [{c}] {ch.ChunkID}: {ch.Entries.Count} files");
+                            foreach (var e in ch.Entries)
+                            {
+                                sb.AppendLine($"  - {e.Header.FileName ?? "<unnamed>"} ({e.Header.FileSize} bytes)");
+                            }
+                        }
+
+                        TextAsset summaryAsset = new TextAsset(sb.ToString());
+                        ctx.AddObjectToAsset("main", summaryAsset, icon);
+                        ctx.SetMainObject(summaryAsset);
+                        return;
                     }
-                }
-                else
-                {
-                    loader.Load(ctx.assetPath);
                 }
             }
             catch (Exception ex)

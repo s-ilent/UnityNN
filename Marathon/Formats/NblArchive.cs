@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
-using UnityEngine;
 using Marathon.IO;
 using Marathon.Formats.Mesh.Ninja;
 
@@ -32,6 +31,8 @@ namespace Marathon.Formats.Archive
             public byte[] RawData;
             public string ChunkID = "NMLL";
             public List<int> Pointers = new List<int>();
+
+            public override string ToString() => Header.FileName ?? $"[{ChunkID}] {Header.Identifier}";
         }
 
         public class NblChunkInfo
@@ -373,6 +374,10 @@ namespace Marathon.Formats.Archive
             return toReturn;
         }
 
+        /// <summary>
+        /// Slices sub-files in the NBL archive into a NinjaNext.FormatData container
+        /// for inspector preview and material survey tools.
+        /// </summary>
         public NinjaNext.FormatData ToFormatData()
         {
             NinjaNext.FormatData data = new NinjaNext.FormatData();
@@ -388,53 +393,58 @@ namespace Marathon.Formats.Archive
                     {
                         entryLoader.Load(ms);
 
-                        if (entryLoader.Data.Object != null)
+                        if (entryLoader.Data.Object != null && data.Object == null)
                             data.Object = entryLoader.Data.Object;
-                        if (entryLoader.Data.TextureList != null)
+                        if (entryLoader.Data.TextureList != null && data.TextureList == null)
                             data.TextureList = entryLoader.Data.TextureList;
-                        if (entryLoader.Data.NodeNameList != null)
+                        if (entryLoader.Data.NodeNameList != null && data.NodeNameList == null)
                             data.NodeNameList = entryLoader.Data.NodeNameList;
-                        if (entryLoader.Data.Motion != null)
+                        if (entryLoader.Data.Motion != null && data.Motion == null)
                             data.Motion = entryLoader.Data.Motion;
-                        if (entryLoader.Data.MaterialMotion != null)
+                        if (entryLoader.Data.MaterialMotion != null && data.MaterialMotion == null)
                             data.MaterialMotion = entryLoader.Data.MaterialMotion;
-                        if (entryLoader.Data.Camera != null)
+                        if (entryLoader.Data.Camera != null && data.Camera == null)
                             data.Camera = entryLoader.Data.Camera;
-                        if (entryLoader.Data.Light != null)
+                        if (entryLoader.Data.Light != null && data.Light == null)
                             data.Light = entryLoader.Data.Light;
-                        if (entryLoader.Data.EffectList != null)
+                        if (entryLoader.Data.EffectList != null && data.EffectList == null)
                             data.EffectList = entryLoader.Data.EffectList;
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        DiagnosticLogs.Add($"[ToFormatData] Fallback parser for '{entry.Header.FileName}': {ex.Message}");
+                        // Fallback by entry ID/filename
                         ms.Position = 0;
                         BinaryReaderEx reader = new BinaryReaderEx(ms);
                         string id = entry.Header.Identifier;
+                        string fn = entry.Header.FileName ?? "";
 
-                        if (id == "NXOB" || id.StartsWith("NGOB") || id.StartsWith("NZOB") || entry.Header.FileName.EndsWith(".xno", StringComparison.OrdinalIgnoreCase) || entry.Header.FileName.EndsWith(".xnj", StringComparison.OrdinalIgnoreCase))
+                        if (data.Object == null && (id == "NXOB" || id.StartsWith("NGOB") || id.StartsWith("NZOB") || fn.EndsWith(".xno", StringComparison.OrdinalIgnoreCase) || fn.EndsWith(".xnj", StringComparison.OrdinalIgnoreCase)))
                         {
                             data.Object = new NinjaObject();
                             data.Object.Read(reader);
                         }
-                        else if (id == "NXTL" || id.StartsWith("NGTL") || id.StartsWith("NZTL") || entry.Header.FileName.EndsWith(".xnt", StringComparison.OrdinalIgnoreCase))
+                        else if (data.TextureList == null && (id == "NXTL" || id.StartsWith("NGTL") || id.StartsWith("NZTL") || fn.EndsWith(".xnt", StringComparison.OrdinalIgnoreCase)))
                         {
                             data.TextureList = new NinjaTextureList();
                             data.TextureList.Read(reader);
                         }
-                        else if (id == "NXNN" || id.StartsWith("NGNN") || id.StartsWith("NZNN") || entry.Header.FileName.EndsWith(".xnn", StringComparison.OrdinalIgnoreCase))
+                        else if (data.NodeNameList == null && (id == "NXNN" || id.StartsWith("NGNN") || id.StartsWith("NZNN") || fn.EndsWith(".xnn", StringComparison.OrdinalIgnoreCase)))
                         {
                             data.NodeNameList = new NinjaNodeNameList();
                             data.NodeNameList.Read(reader);
                         }
-                        else if (id == "NXMA" || id == "NXMO" || id == "NXMV" || entry.Header.FileName.EndsWith(".xnm", StringComparison.OrdinalIgnoreCase) || entry.Header.FileName.EndsWith(".xnv", StringComparison.OrdinalIgnoreCase))
+                        else if ((id == "NXMA" || id == "NXMO" || id == "NXMV" || fn.EndsWith(".xnm", StringComparison.OrdinalIgnoreCase) || fn.EndsWith(".xnv", StringComparison.OrdinalIgnoreCase)))
                         {
                             NinjaMotion motion = new NinjaMotion { ChunkID = id };
                             motion.Read(reader);
-                            if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) || entry.Header.FileName.EndsWith(".xnv", StringComparison.OrdinalIgnoreCase))
-                                data.MaterialMotion = motion;
+                            if (motion.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) || fn.EndsWith(".xnv", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (data.MaterialMotion == null) data.MaterialMotion = motion;
+                            }
                             else
-                                data.Motion = motion;
+                            {
+                                if (data.Motion == null) data.Motion = motion;
+                            }
                         }
                     }
                 }
