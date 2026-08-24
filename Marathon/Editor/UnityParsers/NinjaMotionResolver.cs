@@ -95,6 +95,32 @@ namespace UnityNN.Editor
         /// Converts radians to degrees.
         /// </summary>
         public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
+        
+        /// <summary>
+        /// Unrolls 16-bit BAMS keyframes to prevent 180-degree wrap-around flipping.
+        /// </summary>
+        public static float[] UnrollBams16Track(short[] rawBams)
+        {
+            if (rawBams == null || rawBams.Length == 0) return Array.Empty<float>();
+        
+            float[] unrolledDegrees = new float[rawBams.Length];
+            double accumulatedBams = rawBams[0];
+            unrolledDegrees[0] = BamsToDegrees(rawBams[0]);
+        
+            for (int i = 1; i < rawBams.Length; i++)
+            {
+                double delta = rawBams[i] - (accumulatedBams % 65536.0);
+        
+                // Normalize delta to [-32768, 32768]
+                while (delta > 32768.0) delta -= 65536.0;
+                while (delta < -32768.0) delta += 65536.0;
+        
+                accumulatedBams += delta;
+                unrolledDegrees[i] = (float)(accumulatedBams * (180.0 / 32768.0));
+            }
+        
+            return unrolledDegrees;
+        }
         #endregion
 
         private readonly struct PropertyKey : IEquatable<PropertyKey>
@@ -626,7 +652,7 @@ namespace UnityNN.Editor
             uint flags = (uint)subMotion.Type;
             uint cat = (uint)parentType & 31U;
             if (cat == 0) cat = 1;
-
+        
             // 1. Vector3 Keyframe Tracks
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_VECTOR)
             {
@@ -638,62 +664,71 @@ namespace UnityNN.Editor
                         string propName = binding.CategoryMask == 16 
                             ? GetMaterialPropertyName(layerProp, materialSlot) 
                             : binding.PropertyName;
-
+        
                         PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
-
+        
                         foreach (var objKf in subMotion.Keyframes)
                         {
                             var kf = (NinjaKeyframe.NNS_MOTION_KEY_VECTOR)objKf;
                             float time = (kf.Frame / 60.0f) * timeScale;
-                            float rawVal;
-
-                            if (binding.GroupKey == "_MainTex_ST")
-                            {
-                                rawVal = (binding.PropertyName.EndsWith(".z") || (flags & 0x800000U) != 0)
-                                    ? kf.Value.x
-                                    : kf.Value.y;
-                            }
-                            else
-                            {
-                                rawVal = binding.ChannelIndex switch
-                                {
-                                    0 => kf.Value.x,
-                                    1 => kf.Value.y,
-                                    2 => kf.Value.z,
-                                    _ => 0f
-                                };
-                            }
-
+                            float rawVal = binding.GroupKey == "_MainTex_ST"
+                                ? ((binding.PropertyName.EndsWith(".z") || (flags & 0x800000U) != 0) ? kf.Value.x : kf.Value.y)
+                                : (binding.ChannelIndex switch { 0 => kf.Value.x, 1 => kf.Value.y, 2 => kf.Value.z, _ => 0f });
+        
                             if (binding.GroupKey == "localPosition") rawVal *= scale;
                             if (binding.InvertSign) rawVal = -rawVal;
-
+        
                             AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, rawVal));
                         }
                     }
                 }
                 return;
             }
-
-            // 2. 3-Axis BAMS Rotation Tracks (RotateA16)
+        
+            // 2. 3-Axis BAMS Rotation Tracks (RotateA16) with Unrolling
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)
             {
                 bool hasRX = (flags & 0x800U) != 0;
                 bool hasRY = (flags & 0x1000U) != 0;
                 bool hasRZ = (flags & 0x2000U) != 0;
-
+        
+                float lastX = 0f, lastY = 0f, lastZ = 0f;
+                bool first = true;
+        
                 foreach (var objKf in subMotion.Keyframes)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)objKf;
                     float time = (kf.Frame / 60.0f) * timeScale;
-
-                    if (hasRX) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, BamsToDegrees(kf.Value1)));
-                    if (hasRY) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value2)));
-                    if (hasRZ) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, -BamsToDegrees(kf.Value3)));
+        
+                    if (hasRX)
+                    {
+                        float degX = BamsToDegrees(kf.Value1);
+                        lastX = first ? degX : lastX + Mathf.DeltaAngle(lastX, degX);
+                        AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, lastX));
+                    }
+        
+                    if (hasRY)
+                    {
+                        // Invert Y axis sign for Unity's left-handed coordinate space
+                        float degY = -BamsToDegrees(kf.Value2);
+                        lastY = first ? degY : lastY + Mathf.DeltaAngle(lastY, degY);
+                        AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, lastY));
+                    }
+        
+                    if (hasRZ)
+                    {
+                        // Invert Z axis sign for Unity's left-handed coordinate space
+                        float degZ = -BamsToDegrees(kf.Value3);
+                        lastZ = first ? degZ : lastZ + Mathf.DeltaAngle(lastZ, degZ);
+                        AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, lastZ));
+                    }
+        
+                    first = false;
                 }
                 return;
             }
-
-            // 3. Scalar Keyframe Tracks (Using Declarative Binding Table)
+        
+            // 3. Scalar Keyframe Tracks (Single-Axis Rotation & Translation) with Unrolling
             foreach (var binding in AllTrackBindings)
             {
                 if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
@@ -702,14 +737,17 @@ namespace UnityNN.Editor
                     string propName = binding.CategoryMask == 16 
                         ? GetMaterialPropertyName(layerProp, materialSlot) 
                         : binding.PropertyName;
-
+        
                     PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
-
+                    bool isRotation = binding.GroupKey == "localEulerAnglesRaw";
+                    float lastAngle = 0f;
+                    bool firstKf = true;
+        
                     foreach (var kf in subMotion.Keyframes)
                     {
                         float time = 0f;
                         float scalar = 0f;
-
+        
                         if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32)
                         {
                             time = (s32.Frame / 60f) * timeScale;
@@ -725,10 +763,17 @@ namespace UnityNN.Editor
                             time = (s16.Frame / 60f) * timeScale;
                             scalar = BamsToDegrees(s16.Value);
                         }
-
+        
                         if (binding.GroupKey == "localPosition") scalar *= scale;
                         if (binding.InvertSign) scalar = -scalar;
-
+        
+                        if (isRotation)
+                        {
+                            lastAngle = firstKf ? scalar : lastAngle + Mathf.DeltaAngle(lastAngle, scalar);
+                            scalar = lastAngle;
+                            firstKf = false;
+                        }
+        
                         AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, scalar));
                     }
                 }
