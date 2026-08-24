@@ -448,6 +448,8 @@ namespace UnityNN.Editor
             public readonly List<BoneWeight> BoneWeights;
             public readonly Dictionary<int, List<int>> SubmeshTriangles;
             public bool HasWeights;
+            public bool NoNormals;
+            public bool NoTangents;
 
             public MeshBuffer(int vertexCapacity = 0)
             {
@@ -487,6 +489,10 @@ namespace UnityNN.Editor
                 int baseOffset = Positions.Count;
                 bool isSkinned = vList.BoneMatrixIndices != null && vList.BoneMatrixIndices.Count > 0;
                 if (isSkinned) HasWeights = true;
+                if ((vList.Format & XboxVertexType.NND_VTXTYPE_XB_NORMAL) == 0)
+                    NoNormals = true;
+                if ((vList.Format & XboxVertexType.NND_VTXTYPE_XB_TANGENT) == 0)
+                    NoTangents = true;
 
                 bool applyXform = localTransform.HasValue && localTransform.Value != Matrix4x4.identity;
                 Matrix4x4 xform = localTransform.GetValueOrDefault(Matrix4x4.identity);
@@ -581,6 +587,9 @@ namespace UnityNN.Editor
                 mesh.subMeshCount = sortedKeys.Count;
                 for (int i = 0; i < sortedKeys.Count; i++)
                     mesh.SetTriangles(SubmeshTriangles[sortedKeys[i]], i);
+
+                if (NoNormals) mesh.RecalculateNormals();
+                if (NoTangents) mesh.RecalculateTangents();
 
                 mesh.RecalculateBounds();
                 return mesh;
