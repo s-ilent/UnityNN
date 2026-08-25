@@ -24,6 +24,15 @@ namespace UnityNN.Editor
         [InspectorName("Individual Sub-Objects (Legacy Hierarchy)")]
         IndividualSubObjects = 2
     }
+    
+    public enum AnimationLayerMode
+    {
+        [InspectorName("Combined Single Clip")]
+        CombinedSingleClip = 0,
+    
+        [InspectorName("Separate Clips & Animator Layers")]
+        SeparateClipsAndLayers = 1
+    }
 
     [Serializable]
     public class MaterialRemapEntry
@@ -63,7 +72,8 @@ namespace UnityNN.Editor
 
         // Animation
         public bool ImportAnimation = true;
-        public bool GenerateAnimatorController = false;
+        public AnimationLayerMode AnimationLayerMode = AnimationLayerMode.CombinedSingleClip;
+        public bool GenerateAnimatorController = true;
         public string[] NodeHierarchyTarget = Array.Empty<string>();
 
         public static NinjaImportSettings Default => new NinjaImportSettings();
@@ -102,6 +112,7 @@ namespace UnityNN.Editor
 
         [Header("Animation Settings")]
         public bool m_ImportAnimation = true;
+        public AnimationLayerMode m_AnimationLayerMode = AnimationLayerMode.CombinedSingleClip;
         public bool m_GenerateAnimatorController = false;
         public string[] m_NodeHierarchyTarget;
 

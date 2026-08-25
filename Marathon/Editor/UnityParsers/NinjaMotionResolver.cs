@@ -3,6 +3,7 @@ using UnityNN;
 using UnityEngine;
 using UnityEditor;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using Marathon.Formats.Mesh.Ninja;
@@ -79,15 +80,15 @@ namespace UnityNN.Editor
             new TrackBindingDef { CategoryMask = 16, Mask = 0x1000000U, ComponentType = typeof(Renderer), PropertyName = "material._MainTex_ST.w", GroupKey = "_MainTex_ST", ChannelIndex = 3, DefaultRestValue = 0f, InvertSign = true }
         };
 
-        #region Angle Conversion Helpers
+        #region Angle Conversion & Math Helpers
+
         /// <summary>
-        /// Converts a 16-bit Binary Angle Measurement System (BAMS) short to degrees.
-        /// Range: 32768 = 180 degrees, 65536 = 360 degrees.
+        /// Converts a 16-bit Binary Angle Measurement System (BAMS) short to degrees (32768 = 180 deg).
         /// </summary>
         public static float BamsToDegrees(int bamAngle) => (float)((double)bamAngle * (180.0 / 32768.0));
 
         /// <summary>
-        /// Converts a 32-bit BAMS integer to degrees.
+        /// Converts a 32-bit BAMS integer to degrees (65536 = 360 deg).
         /// </summary>
         public static float Bams32ToDegrees(int bam32Angle) => (float)((double)bam32Angle * (360.0 / 65536.0));
 
@@ -97,33 +98,167 @@ namespace UnityNN.Editor
         public static float RadiansToDegrees(float radAngle) => radAngle * Mathf.Rad2Deg;
 
         /// <summary>
-        /// Unrolls 16-bit BAMS keyframes to prevent 180-degree wrap-around flipping.
+        /// Unrolls a 16-bit BAMS integer angle across consecutive keyframes to prevent 180-degree overflow flipping.
         /// </summary>
-        public static float[] UnrollBams16Track(short[] rawBams)
+        public static int UnrollBams16(short rawValue, ref long accumBams, ref bool isFirst)
         {
-            if (rawBams == null || rawBams.Length == 0) return Array.Empty<float>();
-
-            float[] unrolledDegrees = new float[rawBams.Length];
-            double accumulatedBams = rawBams[0];
-            unrolledDegrees[0] = BamsToDegrees(rawBams[0]);
-
-            for (int i = 1; i < rawBams.Length; i++)
+            if (isFirst)
             {
-                double delta = rawBams[i] - (accumulatedBams % 65536.0);
+                accumBams = rawValue;
+                isFirst = false;
+            }
+            else
+            {
+                int delta = rawValue - (int)(accumBams & 0xFFFF);
+                accumBams += (delta + 32768) % 65536 - 32768;
+            }
+            return (int)accumBams;
+        }
 
-                // Normalize delta to [-32768, 32768]
-                while (delta > 32768.0) delta -= 65536.0;
-                while (delta < -32768.0) delta += 65536.0;
+        /// <summary>
+        /// Unrolls a 16-bit BAMS integer angle and converts the unrolled result directly to degrees.
+        /// </summary>
+        public static float Bams16ToUnrolledDegrees(short rawValue, ref long accumBams, ref bool isFirst)
+        {
+            int unrolledBams = UnrollBams16(rawValue, ref accumBams, ref isFirst);
+            return BamsToDegrees(unrolledBams);
+        }
 
-                accumulatedBams += delta;
-                unrolledDegrees[i] = (float)(accumulatedBams * (180.0 / 32768.0));
+        /// <summary>
+        /// Computes Greatest Common Divisor.
+        /// </summary>
+        public static long Gcd(long a, long b) => b == 0 ? a : Gcd(b, a % b);
+
+        /// <summary>
+        /// Computes Least Common Multiple.
+        /// </summary>
+        public static long Lcm(long a, long b)
+        {
+            if (a <= 0 || b <= 0) return Math.Max(a, b);
+            return (a / Gcd(a, b)) * b;
+        }
+
+        /// <summary>
+        /// Extracts the raw frame timestamp from any Ninja keyframe struct.
+        /// </summary>
+        public static float GetKeyframeFrame(object objKf)
+        {
+            if (objKf is NinjaKeyframe.NNS_MOTION_KEY_VECTOR v) return v.Frame;
+            if (objKf is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16 r) return r.Frame;
+            if (objKf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32) return s32.Frame;
+            if (objKf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f) return f.Frame;
+            if (objKf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16) return s16.Frame;
+            return 0f;
+        }
+
+        /// <summary>
+        /// Extracts the frame timestamp and converted scalar value from SINT32, FLOAT, or SINT16 keyframes.
+        /// </summary>
+        public static bool TryExtractScalarKeyframe(
+            object kf,
+            uint subMotionFlags,
+            ref long accumS16Bams,
+            ref bool isFirstS16,
+            out float frame,
+            out float scalarValue)
+        {
+            frame = 0f;
+            scalarValue = 0f;
+
+            if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32)
+            {
+                frame = s32.Frame;
+                // 32-Bit BAMS is already unrolled in binary stream
+                scalarValue = (subMotionFlags & 8U) != 0 ? Bams32ToDegrees(s32.Value) : s32.Value;
+                return true;
+            }
+            if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f)
+            {
+                frame = f.Frame;
+                scalarValue = (subMotionFlags & 4U) != 0 ? RadiansToDegrees(f.Value) : f.Value;
+                return true;
+            }
+            if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16)
+            {
+                frame = s16.Frame;
+                scalarValue = Bams16ToUnrolledDegrees(s16.Value, ref accumS16Bams, ref isFirstS16);
+                return true;
             }
 
-            return unrolledDegrees;
+            return false;
         }
+        
+        /// <summary>
+        /// Generates tiled frame timestamps across the master animation timeline [0, masterEndFrames],
+        /// including prior/subsequent cycles (c = -1 to maxCycle + 1) to anchor Frame 0 and Frame masterEndFrames.
+        /// </summary>
+        public static List<float> GenerateTiledFrameTimes(
+            float rawFrame,
+            float subStart,
+            float subEnd,
+            float masterEndFrames,
+            bool isRepeatingTrack)
+        {
+            List<float> tiledFrames = new List<float>();
+            float cycleLen = subEnd - subStart;
+            bool shouldTile = isRepeatingTrack && cycleLen > 0.1f && (subEnd + 0.1f) < masterEndFrames;
+        
+            if (!shouldTile)
+            {
+                tiledFrames.Add(rawFrame);
+                return tiledFrames;
+            }
+        
+            // Evaluate cycle from c = -1 (to anchor Frame 0) through maxCycle + 1 (to anchor masterEnd)
+            int minCycle = -1;
+            int maxCycle = (int)Math.Ceiling(masterEndFrames / cycleLen) + 1;
+        
+            for (int c = minCycle; c <= maxCycle; c++)
+            {
+                float cycleOffset = c * cycleLen;
+                float tiledFrame = subStart + cycleOffset + (rawFrame - subStart);
+        
+                if (tiledFrame >= 0f && tiledFrame <= masterEndFrames)
+                {
+                    tiledFrames.Add(tiledFrame);
+                }
+            }
+        
+            return tiledFrames;
+        }
+
+        /// <summary>
+        /// Calculates the effective clip duration in frames using Least Common Multiple (LCM) across repeating sub-tracks.
+        /// </summary>
+        public static long CalculateEffectiveLoopFrames(NinjaMotion motionData, long maxCap = 2400)
+        {
+            if (motionData?.SubMotions == null || motionData.SubMotions.Count == 0) return 600;
+
+            long masterFrames = (long)Mathf.Max(1f, motionData.EndFrame - motionData.StartFrame);
+            long effectiveFrames = masterFrames;
+
+            foreach (var sm in motionData.SubMotions)
+            {
+                if (sm == null || sm.Keyframes == null || sm.Keyframes.Count <= 1) continue;
+
+                bool isRepeatTrack = (sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT |
+                                                              SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT)) != 0;
+
+                long subCycleFrames = (long)Mathf.Max(1f, sm.EndKeyframe - sm.StartKeyframe);
+
+                if (isRepeatTrack && subCycleFrames > 0 && subCycleFrames < masterFrames)
+                {
+                    effectiveFrames = Lcm(effectiveFrames, subCycleFrames);
+                    if (effectiveFrames > maxCap) { effectiveFrames = maxCap; break; }
+                }
+            }
+
+            return effectiveFrames;
+        }
+
         #endregion
 
-        private readonly struct PropertyKey : IEquatable<PropertyKey>
+        public readonly struct PropertyKey : IEquatable<PropertyKey>
         {
             public readonly string TargetPath;
             public readonly Type ComponentType;
@@ -145,7 +280,7 @@ namespace UnityNN.Editor
             public override int GetHashCode() => HashCode.Combine(TargetPath, ComponentType, PropertyName);
         }
 
-        private class SubMotionSegment
+        public class SubMotionSegment
         {
             public SubMotionInterpolationType InterpolationType;
             public readonly List<Keyframe> Keyframes = new List<Keyframe>();
@@ -344,11 +479,15 @@ namespace UnityNN.Editor
             AnimationClip clip = new AnimationClip { name = clipName };
             float framerate = motionData.Framerate <= 0 ? 60.0f : motionData.Framerate;
             float timeScale = 60.0f / framerate;
-            float maxTime = (motionData.EndFrame / 60.0f) * timeScale;
+
+            // Calculate seamless effective clip duration using LCM for repeating sub-tracks
+            long effectiveFrames = CalculateEffectiveLoopFrames(motionData);
+            float maxTime = (effectiveFrames / 60.0f) * timeScale;
 
             nodeHierarchyTargets ??= Array.Empty<string>();
             Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments = new Dictionary<PropertyKey, List<SubMotionSegment>>();
 
+            // Filter out MA chunk ID from forcing material motion so NXMA node motions are parsed correctly
             bool isMatMotion = (motionData.Type & MotionType.NND_MOTIONTYPE_CATEGORY_MASK) == MotionType.NND_MOTIONTYPE_MATERIAL ||
                                motionData.Type.HasFlag(MotionType.NND_MOTIONTYPE_MATERIAL) ||
                                (motionData.ChunkID != null && (motionData.ChunkID.EndsWith("NV", StringComparison.OrdinalIgnoreCase) ||
@@ -385,7 +524,8 @@ namespace UnityNN.Editor
                             scale,
                             effectiveMotionType,
                             target.MaterialSlot,
-                            layerIndex
+                            layerIndex,
+                            effectiveFrames
                         );
                     }
                 }
@@ -395,7 +535,7 @@ namespace UnityNN.Editor
                         ? nodeHierarchyTargets[sm.NodeIndex]
                         : sm.NodeIndex.ToString("0000");
 
-                    CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, effectiveMotionType, 0, 0);
+                    CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, effectiveMotionType, 0, 0, effectiveFrames);
                 }
             }
 
@@ -404,7 +544,7 @@ namespace UnityNN.Editor
 
             foreach (var kvp in propertySegments)
             {
-                AnimationCurve merged = BuildMergedCurve(kvp.Value, kvp.Key);
+                AnimationCurve merged = BuildMergedCurve(kvp.Value, kvp.Key, maxTime);
                 if (merged?.keys.Length > 0)
                 {
                     clip.SetCurve(kvp.Key.TargetPath, kvp.Key.ComponentType, kvp.Key.PropertyName, merged);
@@ -646,13 +786,24 @@ namespace UnityNN.Editor
             float scale,
             MotionType parentType,
             int materialSlot = 0,
-            int layerIndex = 0)
+            int layerIndex = 0,
+            float masterEndFrames = 600f)
         {
+            if (subMotion?.Keyframes == null || subMotion.Keyframes.Count == 0) return;
+
             uint flags = (uint)subMotion.Type;
             uint cat = (uint)parentType & 31U;
             if (cat == 0) cat = 1;
 
-            // 1. Vector3 Keyframe Tracks
+            bool isRepeatingTrack = (subMotion.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT |
+                                                                   SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT)) != 0;
+
+            float subStart = subMotion.StartKeyframe;
+            float subEnd = subMotion.EndKeyframe;
+
+            // --------------------------------------------------------------------------
+            // A. Vector3 Keyframe Tracks
+            // --------------------------------------------------------------------------
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_VECTOR)
             {
                 foreach (var binding in AllTrackBindings)
@@ -660,8 +811,8 @@ namespace UnityNN.Editor
                     if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
                     {
                         string layerProp = GetLayerPropertyName(binding.PropertyName, layerIndex);
-                        string propName = binding.CategoryMask == 16
-                            ? GetMaterialPropertyName(layerProp, materialSlot)
+                        string propName = binding.CategoryMask == 16 
+                            ? GetMaterialPropertyName(layerProp, materialSlot) 
                             : binding.PropertyName;
 
                         PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
@@ -669,7 +820,6 @@ namespace UnityNN.Editor
                         foreach (var objKf in subMotion.Keyframes)
                         {
                             var kf = (NinjaKeyframe.NNS_MOTION_KEY_VECTOR)objKf;
-                            float time = (kf.Frame / 60.0f) * timeScale;
                             float rawVal = binding.GroupKey == "_MainTex_ST"
                                 ? ((binding.PropertyName.EndsWith(".z") || (flags & 0x800000U) != 0) ? kf.Value.x : kf.Value.y)
                                 : (binding.ChannelIndex switch { 0 => kf.Value.x, 1 => kf.Value.y, 2 => kf.Value.z, _ => 0f });
@@ -677,14 +827,20 @@ namespace UnityNN.Editor
                             if (binding.GroupKey == "localPosition") rawVal *= scale;
                             if (binding.InvertSign) rawVal = -rawVal;
 
-                            AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, rawVal));
+                            foreach (float tiledFrame in GenerateTiledFrameTimes(kf.Frame, subStart, subEnd, masterEndFrames, isRepeatingTrack))
+                            {
+                                float time = (tiledFrame / 60.0f) * timeScale;
+                                AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, rawVal));
+                            }
                         }
                     }
                 }
                 return;
             }
 
-            // 2. 3-Axis 16-Bit BAMS Rotation Tracks (RotateA16) with 16-bit Integer Unrolling
+            // --------------------------------------------------------------------------
+            // B. 3-Axis 16-Bit BAMS Rotation Tracks (RotateA16)
+            // --------------------------------------------------------------------------
             if (subMotion.Keyframes[0] is NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)
             {
                 bool hasRX = (flags & 0x800U) != 0;
@@ -697,99 +853,52 @@ namespace UnityNN.Editor
                 foreach (var objKf in subMotion.Keyframes)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)objKf;
-                    float time = (kf.Frame / 60.0f) * timeScale;
 
-                    if (first)
+                    float degX = hasRX ? Bams16ToUnrolledDegrees(kf.Value1, ref accumX, ref first) : 0f;
+                    float degY = hasRY ? -Bams16ToUnrolledDegrees(kf.Value2, ref accumY, ref first) : 0f;
+                    float degZ = hasRZ ? -Bams16ToUnrolledDegrees(kf.Value3, ref accumZ, ref first) : 0f;
+
+                    foreach (float tiledFrame in GenerateTiledFrameTimes(kf.Frame, subStart, subEnd, masterEndFrames, isRepeatingTrack))
                     {
-                        accumX = kf.Value1;
-                        accumY = kf.Value2;
-                        accumZ = kf.Value3;
-                        first = false;
-                    }
-                    else
-                    {
-                        int dX = kf.Value1 - (int)(accumX & 0xFFFF);
-                        accumX += (dX + 32768) % 65536 - 32768;
+                        float time = (tiledFrame / 60.0f) * timeScale;
 
-                        int dY = kf.Value2 - (int)(accumY & 0xFFFF);
-                        accumY += (dY + 32768) % 65536 - 32768;
-
-                        int dZ = kf.Value3 - (int)(accumZ & 0xFFFF);
-                        accumZ += (dZ + 32768) % 65536 - 32768;
-                    }
-
-                    if (hasRX)
-                    {
-                        float degX = BamsToDegrees((int)accumX);
-                        AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, degX));
-                    }
-
-                    if (hasRY)
-                    {
-                        float degY = -BamsToDegrees((int)accumY);
-                        AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, degY));
-                    }
-
-                    if (hasRZ)
-                    {
-                        float degZ = -BamsToDegrees((int)accumZ);
-                        AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, degZ));
+                        if (hasRX) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, degX));
+                        if (hasRY) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, degY));
+                        if (hasRZ) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, degZ));
                     }
                 }
                 return;
             }
 
-            // 3. Scalar Keyframe Tracks (32-Bit BAMS, 16-Bit BAMS, Float, Radian)
+            // --------------------------------------------------------------------------
+            // C. Scalar Keyframe Tracks (32-Bit BAMS, 16-Bit BAMS, Float, Radian)
+            // --------------------------------------------------------------------------
             foreach (var binding in AllTrackBindings)
             {
                 if (binding.Mask != 0 && binding.CategoryMask == cat && (flags & binding.Mask) != 0)
                 {
                     string layerProp = GetLayerPropertyName(binding.PropertyName, layerIndex);
-                    string propName = binding.CategoryMask == 16
-                        ? GetMaterialPropertyName(layerProp, materialSlot)
+                    string propName = binding.CategoryMask == 16 
+                        ? GetMaterialPropertyName(layerProp, materialSlot) 
                         : binding.PropertyName;
 
                     PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
                     long accumS16Bams = 0;
-                    bool firstKf = true;
+                    bool firstS16 = true;
 
                     foreach (var kf in subMotion.Keyframes)
                     {
-                        float time = 0f;
-                        float scalar = 0f;
+                        if (TryExtractScalarKeyframe(kf, flags, ref accumS16Bams, ref firstS16, out float rawFrame, out float scalarVal))
+                        {
+                            if (binding.GroupKey == "localPosition") scalarVal *= scale;
+                            if (binding.InvertSign) scalarVal = -scalarVal;
 
-                        if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT32 s32)
-                        {
-                            time = (s32.Frame / 60f) * timeScale;
-                            // 32-Bit BAMS is already unrolled in binary stream!
-                            scalar = (flags & 8U) != 0 ? Bams32ToDegrees(s32.Value) : s32.Value;
-                        }
-                        else if (kf is NinjaKeyframe.NNS_MOTION_KEY_FLOAT f)
-                        {
-                            time = (f.Frame / 60f) * timeScale;
-                            scalar = (flags & 4U) != 0 ? RadiansToDegrees(f.Value) : f.Value;
-                        }
-                        else if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16)
-                        {
-                            time = (s16.Frame / 60f) * timeScale;
-                            // 16-Bit BAMS unrolling in 16-bit integer space
-                            if (firstKf)
+                            foreach (float tiledFrame in GenerateTiledFrameTimes(rawFrame, subStart, subEnd, masterEndFrames, isRepeatingTrack))
                             {
-                                accumS16Bams = s16.Value;
-                                firstKf = false;
+                                float time = (tiledFrame / 60.0f) * timeScale;
+                                AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, scalarVal));
                             }
-                            else
-                            {
-                                int delta = s16.Value - (int)(accumS16Bams & 0xFFFF);
-                                accumS16Bams += (delta + 32768) % 65536 - 32768;
-                            }
-                            scalar = BamsToDegrees((int)accumS16Bams);
                         }
-
-                        if (binding.GroupKey == "localPosition") scalar *= scale;
-                        if (binding.InvertSign) scalar = -scalar;
-
-                        AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, scalar));
                     }
                 }
             }
@@ -825,12 +934,13 @@ namespace UnityNN.Editor
                         if (!propertySegments.ContainsKey(channelKey))
                         {
                             float defVal = GetDefaultChannelValue(companion, nodeTr);
+                            // Use LINEAR interpolation instead of CONSTANT for rotation/position companion channels
                             var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_LINEAR };
-                            seg.Keyframes.Add(new Keyframe(0f, defVal, float.PositiveInfinity, float.PositiveInfinity));
+                            seg.Keyframes.Add(new Keyframe(0f, defVal, 0f, 0f));
 
                             if (maxTime > 0.001f)
                             {
-                                seg.Keyframes.Add(new Keyframe(maxTime, defVal, float.PositiveInfinity, float.PositiveInfinity));
+                                seg.Keyframes.Add(new Keyframe(maxTime, defVal, 0f, 0f));
                             }
 
                             propertySegments[channelKey] = new List<SubMotionSegment> { seg };
@@ -919,20 +1029,21 @@ namespace UnityNN.Editor
         #endregion
 
         #region Tangents & Curve Merging
-        private static AnimationCurve BuildMergedCurve(List<SubMotionSegment> segments, PropertyKey key)
+        private static AnimationCurve BuildMergedCurve(List<SubMotionSegment> segments, PropertyKey key, float maxTime)
         {
             if (segments == null || segments.Count == 0) return null;
             List<Keyframe> allKfs = new List<Keyframe>();
-
+        
+            // Transform rotation properties must never use PositiveInfinity (stepped) tangents
             bool isTransformRotation = key.ComponentType == typeof(Transform) && key.PropertyName.StartsWith("localEulerAngles");
-
+        
             foreach (var seg in segments)
             {
                 if (seg.Keyframes.Count == 0) continue;
-
+        
                 bool isConstant = !isTransformRotation && seg.InterpolationType.HasFlag(SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTANT);
                 Keyframe[] keys = seg.Keyframes.ToArray();
-
+        
                 if (isConstant)
                 {
                     for (int i = 0; i < keys.Length; i++)
@@ -956,13 +1067,13 @@ namespace UnityNN.Editor
                     keys[0].inTangent = keys[0].outTangent;
                     keys[keys.Length - 1].outTangent = keys[keys.Length - 1].inTangent;
                 }
-
+        
                 allKfs.AddRange(keys);
             }
-
+        
             if (allKfs.Count == 0) return null;
             allKfs.Sort((a, b) => a.time.CompareTo(b.time));
-
+        
             List<Keyframe> unique = new List<Keyframe>();
             for (int i = 0; i < allKfs.Count; i++)
             {
@@ -983,7 +1094,22 @@ namespace UnityNN.Editor
                 }
                 unique.Add(kf);
             }
-
+        
+            // --------------------------------------------------------------------------
+            // Boundary Anchoring: Ensure t = 0.0s and t = maxTime are explicitly anchored
+            // --------------------------------------------------------------------------
+            if (unique[0].time > 0.0001f)
+            {
+                Keyframe first = unique[0];
+                unique.Insert(0, new Keyframe(0f, first.value, first.inTangent, first.outTangent));
+            }
+        
+            if (maxTime > 0.001f && unique[unique.Count - 1].time < maxTime - 0.0001f)
+            {
+                Keyframe last = unique[unique.Count - 1];
+                unique.Add(new Keyframe(maxTime, last.value, last.inTangent, last.outTangent));
+            }
+        
             return new AnimationCurve(unique.ToArray());
         }
         #endregion

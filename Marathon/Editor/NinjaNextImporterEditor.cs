@@ -28,6 +28,7 @@ namespace UnityNN.Editor
         private SerializedProperty m_MaterialRemapsProp;
         private SerializedProperty m_TextureRemapsProp;
         private SerializedProperty m_ImportAnimationProp;
+        private SerializedProperty m_AnimationLayerModeProp;
         private SerializedProperty m_GenerateAnimatorControllerProp;
         private SerializedProperty m_NodeHierarchyTargetProp;
 
@@ -54,6 +55,7 @@ namespace UnityNN.Editor
             m_MaterialRemapsProp = serializedObject.FindProperty("m_MaterialRemaps");
             m_TextureRemapsProp = serializedObject.FindProperty("m_TextureRemaps");
             m_ImportAnimationProp = serializedObject.FindProperty("m_ImportAnimation");
+            m_AnimationLayerModeProp = serializedObject.FindProperty("m_AnimationLayerMode");
             m_GenerateAnimatorControllerProp = serializedObject.FindProperty("m_GenerateAnimatorController");
             m_NodeHierarchyTargetProp = serializedObject.FindProperty("m_NodeHierarchyTarget");
 
@@ -520,6 +522,11 @@ namespace UnityNN.Editor
             if (m_ImportAnimationProp.boolValue)
             {
                 EditorGUI.indentLevel++;
+
+                if (m_AnimationLayerModeProp != null)
+                {
+                    EditorGUILayout.PropertyField(m_AnimationLayerModeProp, new GUIContent("Animation Layer Mode"));
+                }
 
                 if (m_GenerateAnimatorControllerProp != null)
                 {

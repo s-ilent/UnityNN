@@ -277,10 +277,17 @@ namespace UnityNN.Editor
             if (loadedClips.Count > 0)
             {
                 Animator animator = rootGO.AddComponent<Animator>();
-
-                if (settings.GenerateAnimatorController && (mainNodeClip != null || mainMatClip != null))
+            
+                if (settings.GenerateAnimatorController)
                 {
-                    BuildTwoLayerAnimatorController(assetName, mainNodeClip, mainMatClip, animator, ctx);
+                    if (settings.AnimationLayerMode == AnimationLayerMode.SeparateClipsAndLayers)
+                    {
+                        BuildMultiLayerAnimatorController(assetName, loadedClips, animator, ctx);
+                    }
+                    else if (mainNodeClip != null || mainMatClip != null)
+                    {
+                        BuildTwoLayerAnimatorController(assetName, mainNodeClip, mainMatClip, animator, ctx);
+                    }
                 }
             }
         }
@@ -344,6 +351,49 @@ namespace UnityNN.Editor
             AddControllerLayer("Base Layer", "Node", mainNodeClip, 1.0f);
             AddControllerLayer("Material Layer", "Mat", mainMatClip, 1.0f);
 
+            animator.runtimeAnimatorController = controller;
+        }
+        public static void BuildMultiLayerAnimatorController(
+            string assetName,
+            List<AnimationClip> clips,
+            Animator animator,
+            AssetImportContext ctx)
+        {
+            if (clips == null || clips.Count == 0 || animator == null) return;
+        
+            AnimatorController controller = new AnimatorController { name = $"{assetName}_Controller" };
+            ctx.AddObjectToAsset("AnimatorController", controller);
+        
+            for (int i = 0; i < clips.Count; i++)
+            {
+                AnimationClip clip = clips[i];
+                if (clip == null) continue;
+        
+                string layerName = (i == 0) 
+                    ? "Base Layer" 
+                    : (clip.name.Contains("Material") ? $"Material Layer {i}" : $"Layer {i}");
+        
+                controller.AddLayer(layerName);
+        
+                var layers = controller.layers;
+                int layerIdx = layers.Length - 1;
+                if (layerIdx > 0)
+                {
+                    layers[layerIdx].defaultWeight = 1.0f; // Enable layer weight fully
+                    controller.layers = layers;
+                }
+        
+                AnimatorStateMachine sm = controller.layers[layerIdx].stateMachine;
+                if (sm != null)
+                {
+                    ctx.AddObjectToAsset($"{clip.name}_StateMachine", sm);
+                    AnimatorState st = sm.AddState(clip.name);
+                    st.motion = clip;
+                    sm.defaultState = st;
+                    ctx.AddObjectToAsset($"{clip.name}_State", st);
+                }
+            }
+        
             animator.runtimeAnimatorController = controller;
         }
     }
