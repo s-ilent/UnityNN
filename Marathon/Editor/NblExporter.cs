@@ -132,25 +132,27 @@ namespace UnityNN.Editor
         {
             if (!IsNblPath(assetPath)) return;
 
+            int extracted = 0;
+            int pngs = 0;
+            int warnings = 0;
+
             AssetDatabase.StartAssetEditing();
             try
             {
-                ExtractNblInternal(assetPath, convertXvrToPngOnly, out int extracted, out int pngs, out int warnings);
-                AssetDatabase.StopAssetEditing();
-                AssetDatabase.Refresh();
-
-                string folderName = Path.GetFileNameWithoutExtension(assetPath) + "_extracted";
-                EditorUtility.DisplayDialog(
-                    "NBL Extraction Complete",
-                    $"Successfully extracted archive:\n• Destination: {folderName}\n• Total Files: {extracted}\n• Converted PNGs: {pngs}\n• Warnings: {warnings}",
-                    "OK"
-                );
+                ExtractNblInternal(assetPath, convertXvrToPngOnly, out extracted, out pngs, out warnings);
             }
             finally
             {
                 AssetDatabase.StopAssetEditing();
                 AssetDatabase.Refresh();
             }
+
+            string folderName = Path.GetFileNameWithoutExtension(assetPath) + "_extracted";
+            EditorUtility.DisplayDialog(
+                "NBL Extraction Complete",
+                $"Successfully extracted archive:\n• Destination: {folderName}\n• Total Files: {extracted}\n• Converted PNGs: {pngs}\n• Warnings: {warnings}",
+                "OK"
+            );
         }
 
         private static void ExtractNblInternal(
