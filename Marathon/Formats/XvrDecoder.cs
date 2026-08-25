@@ -46,14 +46,7 @@ namespace UnityNN
                      (header[0] == 'G' && header[1] == 'B' && header[2] == 'I' && header[3] == 'X') ||
                      (header[0x10] == 'P' && header[0x11] == 'V' && header[0x12] == 'R' && header[0x13] == 'T'))
             {
-                if (BitConverter.ToInt32(rawData, 0x20) == 0x840001)
-                {
-                    startingOffset = 0x40;
-                }
-                else
-                {
-                    startingOffset = 0x20;
-                }
+                startingOffset = (BitConverter.ToInt32(rawData, 0x20) == 0x840001) ? 0x40 : 0x20;
             }
 
             if (startingOffset >= rawData.Length)
@@ -69,37 +62,25 @@ namespace UnityNN
 
             try
             {
+                byte[] rgbaPixels = null;
+
                 // DXT1 Compression (0x73, 0x74)
                 if (pixelFlags == 0x73 || pixelFlags == 0x74)
                 {
-                    int minBytes = Mathf.Max(8, (width * height) / 2);
-                    if (pixelBytes.Length >= minBytes)
-                    {
-                        Texture2D tex = new Texture2D(width, height, TextureFormat.DXT1, false);
-                        byte[] dxtData = pixelBytes.Length == minBytes ? pixelBytes : SliceBytes(pixelBytes, minBytes);
-                        tex.LoadRawTextureData(dxtData);
-                        tex.Apply();
-                        return tex;
-                    }
+                    rgbaPixels = DecodeDxt1(pixelBytes, width, height);
                 }
-
-                // DXT3 Compression (0x77, 0x78, 0x75, 0x76) / DXT5 Compression (0x7B, 0x7C)
-                if (pixelFlags == 0x77 || pixelFlags == 0x78 || pixelFlags == 0x75 || pixelFlags == 0x76 ||
-                    pixelFlags == 0x7B || pixelFlags == 0x7C || pixelFlags == 0x79 || pixelFlags == 0x7A)
+                // DXT3 / DXT5 Compression (0x77, 0x78, 0x75, 0x76, 0x7B, 0x7C, 0x79, 0x7A)
+                else if (pixelFlags == 0x77 || pixelFlags == 0x78 || pixelFlags == 0x75 || pixelFlags == 0x76 ||
+                         pixelFlags == 0x7B || pixelFlags == 0x7C || pixelFlags == 0x79 || pixelFlags == 0x7A)
                 {
-                    int minBytes = Mathf.Max(16, width * height);
-                    if (pixelBytes.Length >= minBytes)
-                    {
-                        Texture2D tex = new Texture2D(width, height, TextureFormat.DXT5, false);
-                        byte[] dxtData = pixelBytes.Length == minBytes ? pixelBytes : SliceBytes(pixelBytes, minBytes);
-                        tex.LoadRawTextureData(dxtData);
-                        tex.Apply();
-                        return tex;
-                    }
+                    rgbaPixels = DecodeDxt5(pixelBytes, width, height);
+                }
+                // Unswizzle Morton-order Raster Formats
+                else
+                {
+                    rgbaPixels = UnswizzleRaster(pixelBytes, width, height, pixelFormat);
                 }
 
-                // Unswizzle Morton-order Raster Formats
-                byte[] rgbaPixels = UnswizzleRaster(pixelBytes, width, height, pixelFormat);
                 if (rgbaPixels != null)
                 {
                     Texture2D tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
@@ -116,11 +97,179 @@ namespace UnityNN
             return null;
         }
 
-        private static byte[] SliceBytes(byte[] source, int length)
+        private static byte[] DecodeDxt1(byte[] data, int width, int height)
         {
-            byte[] dest = new byte[length];
-            Array.Copy(source, 0, dest, 0, Math.Min(source.Length, length));
-            return dest;
+            byte[] rgba = new byte[width * height * 4];
+            int blocksX = Math.Max(1, (width + 3) / 4);
+            int blocksY = Math.Max(1, (height + 3) / 4);
+            int offset = 0;
+
+            for (int by = 0; by < blocksY; by++)
+            {
+                for (int bx = 0; bx < blocksX; bx++)
+                {
+                    if (offset + 8 > data.Length) break;
+
+                    ushort c0 = (ushort)(data[offset] | (data[offset + 1] << 8));
+                    ushort c1 = (ushort)(data[offset + 2] | (data[offset + 3] << 8));
+                    uint code = (uint)(data[offset + 4] | (data[offset + 5] << 8) | (data[offset + 6] << 16) | (data[offset + 7] << 24));
+                    offset += 8;
+
+                    UnpackRgb565(c0, out byte r0, out byte g0, out byte b0);
+                    UnpackRgb565(c1, out byte r1, out byte g1, out byte b1);
+
+                    byte[] palR = new byte[4];
+                    byte[] palG = new byte[4];
+                    byte[] palB = new byte[4];
+                    byte[] palA = new byte[4];
+
+                    palR[0] = r0; palG[0] = g0; palB[0] = b0; palA[0] = 255;
+                    palR[1] = r1; palG[1] = g1; palB[1] = b1; palA[1] = 255;
+
+                    if (c0 > c1)
+                    {
+                        palR[2] = (byte)((2 * r0 + r1) / 3);
+                        palG[2] = (byte)((2 * g0 + g1) / 3);
+                        palB[2] = (byte)((2 * b0 + b1) / 3);
+                        palA[2] = 255;
+
+                        palR[3] = (byte)((r0 + 2 * r1) / 3);
+                        palG[3] = (byte)((g0 + 2 * g1) / 3);
+                        palB[3] = (byte)((b0 + 2 * b1) / 3);
+                        palA[3] = 255;
+                    }
+                    else
+                    {
+                        palR[2] = (byte)((r0 + r1) / 2);
+                        palG[2] = (byte)((g0 + g1) / 2);
+                        palB[2] = (byte)((b0 + b1) / 2);
+                        palA[2] = 255;
+
+                        palR[3] = 0; palG[3] = 0; palB[3] = 0; palA[3] = 0;
+                    }
+
+                    for (int py = 0; py < 4; py++)
+                    {
+                        for (int px = 0; px < 4; px++)
+                        {
+                            int x = bx * 4 + px;
+                            int y = by * 4 + py;
+
+                            if (x < width && y < height)
+                            {
+                                int targetY = height - 1 - y; // Direct vertical inversion for Unity
+                                int idx = (int)((code >> (2 * (py * 4 + px))) & 3);
+                                int dst = (targetY * width + x) * 4;
+
+                                rgba[dst + 0] = palR[idx];
+                                rgba[dst + 1] = palG[idx];
+                                rgba[dst + 2] = palB[idx];
+                                rgba[dst + 3] = palA[idx];
+                            }
+                        }
+                    }
+                }
+            }
+
+            return rgba;
+        }
+
+        private static byte[] DecodeDxt5(byte[] data, int width, int height)
+        {
+            byte[] rgba = new byte[width * height * 4];
+            int blocksX = Math.Max(1, (width + 3) / 4);
+            int blocksY = Math.Max(1, (height + 3) / 4);
+            int offset = 0;
+
+            for (int by = 0; by < blocksY; by++)
+            {
+                for (int bx = 0; bx < blocksX; bx++)
+                {
+                    if (offset + 16 > data.Length) break;
+
+                    // 1. Alpha block (8 bytes)
+                    byte a0 = data[offset];
+                    byte a1 = data[offset + 1];
+                    ulong aBits = (ulong)data[offset + 2] |
+                                  ((ulong)data[offset + 3] << 8) |
+                                  ((ulong)data[offset + 4] << 16) |
+                                  ((ulong)data[offset + 5] << 24) |
+                                  ((ulong)data[offset + 6] << 32) |
+                                  ((ulong)data[offset + 7] << 40);
+                    offset += 8;
+
+                    byte[] palA = new byte[8];
+                    palA[0] = a0;
+                    palA[1] = a1;
+
+                    if (a0 > a1)
+                    {
+                        for (int k = 1; k < 7; k++)
+                            palA[k + 1] = (byte)(((7 - k) * a0 + k * a1) / 7);
+                    }
+                    else
+                    {
+                        for (int k = 1; k < 5; k++)
+                            palA[k + 1] = (byte)(((5 - k) * a0 + k * a1) / 5);
+                        palA[6] = 0;
+                        palA[7] = 255;
+                    }
+
+                    // 2. Color block (8 bytes)
+                    ushort c0 = (ushort)(data[offset] | (data[offset + 1] << 8));
+                    ushort c1 = (ushort)(data[offset + 2] | (data[offset + 3] << 8));
+                    uint code = (uint)(data[offset + 4] | (data[offset + 5] << 8) | (data[offset + 6] << 16) | (data[offset + 7] << 24));
+                    offset += 8;
+
+                    UnpackRgb565(c0, out byte r0, out byte g0, out byte b0);
+                    UnpackRgb565(c1, out byte r1, out byte g1, out byte b1);
+
+                    byte[] palR = new byte[4];
+                    byte[] palG = new byte[4];
+                    byte[] palB = new byte[4];
+
+                    palR[0] = r0; palG[0] = g0; palB[0] = b0;
+                    palR[1] = r1; palG[1] = g1; palB[1] = b1;
+                    palR[2] = (byte)((2 * r0 + r1) / 3);
+                    palG[2] = (byte)((2 * g0 + g1) / 3);
+                    palB[2] = (byte)((2 * b0 + b1) / 3);
+                    palR[3] = (byte)((r0 + 2 * r1) / 3);
+                    palG[3] = (byte)((g0 + 2 * g1) / 3);
+                    palB[3] = (byte)((b0 + 2 * b1) / 3);
+
+                    for (int py = 0; py < 4; py++)
+                    {
+                        for (int px = 0; px < 4; px++)
+                        {
+                            int x = bx * 4 + px;
+                            int y = by * 4 + py;
+
+                            if (x < width && y < height)
+                            {
+                                int targetY = height - 1 - y; // Direct vertical inversion for Unity
+                                int pIdx = py * 4 + px;
+                                int cIdx = (int)((code >> (2 * pIdx)) & 3);
+                                int aIdx = (int)((aBits >> (3 * pIdx)) & 7);
+                                int dst = (targetY * width + x) * 4;
+
+                                rgba[dst + 0] = palR[cIdx];
+                                rgba[dst + 1] = palG[cIdx];
+                                rgba[dst + 2] = palB[cIdx];
+                                rgba[dst + 3] = palA[aIdx];
+                            }
+                        }
+                    }
+                }
+            }
+
+            return rgba;
+        }
+
+        private static void UnpackRgb565(ushort c, out byte r, out byte g, out byte b)
+        {
+            r = (byte)(((c >> 11) & 0x1F) * 255 / 31);
+            g = (byte)(((c >> 5) & 0x3F) * 255 / 63);
+            b = (byte)((c & 0x1F) * 255 / 31);
         }
 
         private static byte[] UnswizzleRaster(byte[] swizzledData, int width, int height, byte pixelFormat)
@@ -143,7 +292,8 @@ namespace UnityNN
 
                 if (u < height && v < width)
                 {
-                    int dstIdx = (u * width + v) * 4;
+                    int targetU = height - 1 - u; // Direct vertical inversion for Unity
+                    int dstIdx = (targetU * width + v) * 4;
                     int srcIdx = j * bpp;
 
                     if (dstIdx + 3 >= rgba.Length) continue;
