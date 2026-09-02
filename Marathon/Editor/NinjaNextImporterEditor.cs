@@ -31,6 +31,8 @@ namespace UnityNN.Editor
         private SerializedProperty m_AnimationLayerModeProp;
         private SerializedProperty m_GenerateAnimatorControllerProp;
         private SerializedProperty m_NodeHierarchyTargetProp;
+        private SerializedProperty m_CompressAnimationProp;
+        private SerializedProperty m_CompressionSettingsProp;
 
         private NinjaNext m_PreviewData;
         private ParticleEffectFile m_PreviewParticleData;
@@ -58,6 +60,8 @@ namespace UnityNN.Editor
             m_AnimationLayerModeProp = serializedObject.FindProperty("m_AnimationLayerMode");
             m_GenerateAnimatorControllerProp = serializedObject.FindProperty("m_GenerateAnimatorController");
             m_NodeHierarchyTargetProp = serializedObject.FindProperty("m_NodeHierarchyTarget");
+            m_CompressAnimationProp = serializedObject.FindProperty("m_CompressAnimation");
+            m_CompressionSettingsProp = serializedObject.FindProperty("m_CompressionSettings");
 
             m_LastLoadedPath = "";
             LoadPreviewData();
@@ -531,6 +535,23 @@ namespace UnityNN.Editor
                 if (m_GenerateAnimatorControllerProp != null)
                 {
                     EditorGUILayout.PropertyField(m_GenerateAnimatorControllerProp, new GUIContent("Generate Animator Controller"));
+                }
+
+                if (m_CompressAnimationProp != null)
+                {
+                    EditorGUILayout.PropertyField(m_CompressAnimationProp, new GUIContent("Curve Compression"));
+                    if (m_CompressAnimationProp.boolValue && m_CompressionSettingsProp != null)
+                    {
+                        EditorGUI.indentLevel++;
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("PositionTolerance"), new GUIContent("Position Tolerance (m)"));
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("EulerRotationToleranceDeg"), new GUIContent("Rotation Tolerance (deg)"));
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("ScaleTolerance"), new GUIContent("Scale Tolerance"));
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("UvTolerance"), new GUIContent("UV Tolerance"));
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("ColorTolerance"), new GUIContent("Color Tolerance"));
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("StripConstantCurves"), new GUIContent("Strip Static 0-Curves"));
+                        EditorGUILayout.PropertyField(m_CompressionSettingsProp.FindPropertyRelative("SampleRate"), new GUIContent("Evaluation Rate (FPS)"));
+                        EditorGUI.indentLevel--;
+                    }
                 }
 
                 if (m_DistinctBoneCount > 1 || m_DistinctTexCount > 1)

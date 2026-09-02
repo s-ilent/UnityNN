@@ -74,6 +74,8 @@ namespace UnityNN.Editor
         public bool ImportAnimation = true;
         public AnimationLayerMode AnimationLayerMode = AnimationLayerMode.CombinedSingleClip;
         public bool GenerateAnimatorController = true;
+        public bool CompressAnimation = false;
+        public NinjaMotionCompressionSettings CompressionSettings = new NinjaMotionCompressionSettings();
         public string[] NodeHierarchyTarget = Array.Empty<string>();
 
         public static NinjaImportSettings Default => new NinjaImportSettings();
@@ -114,6 +116,11 @@ namespace UnityNN.Editor
         public bool m_ImportAnimation = true;
         public AnimationLayerMode m_AnimationLayerMode = AnimationLayerMode.CombinedSingleClip;
         public bool m_GenerateAnimatorController = false;
+
+        [Header("Animation Compression (Optional)")]
+        public bool m_CompressAnimation = false;
+        public NinjaMotionCompressionSettings m_CompressionSettings = new NinjaMotionCompressionSettings();
+
         public string[] m_NodeHierarchyTarget;
 
         public NinjaImportSettings GetSettings() => new NinjaImportSettings
@@ -130,7 +137,10 @@ namespace UnityNN.Editor
             TextureSearchPaths = m_TextureSearchPaths ?? Array.Empty<string>(),
             TextureRemaps = m_TextureRemaps,
             ImportAnimation = m_ImportAnimation,
+            AnimationLayerMode = m_AnimationLayerMode,
             GenerateAnimatorController = m_GenerateAnimatorController,
+            CompressAnimation = m_CompressAnimation,
+            CompressionSettings = m_CompressionSettings ?? new NinjaMotionCompressionSettings(),
             NodeHierarchyTarget = m_NodeHierarchyTarget ?? Array.Empty<string>()
         };
 
@@ -295,6 +305,11 @@ namespace UnityNN.Editor
             
                     if (clip != null)
                     {
+                        if (settings.CompressAnimation)
+                        {
+                            clip = NinjaMotionCompressor.CompressNinjaClip(clip, settings.CompressionSettings);
+                        }
+
                         ctx.AddObjectToAsset("main", clip, icon);
                         ctx.SetMainObject(clip);
                         return;

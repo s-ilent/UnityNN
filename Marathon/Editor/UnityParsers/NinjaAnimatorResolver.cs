@@ -141,7 +141,6 @@ namespace UnityNN.Editor
             HashSet<string> distinctTexFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             RelObjectAnimationComponent animMeta = null;
-
             // 1. Embedded Motions in Model chunk (.xnj / multi-chunk containers)
             if (loader.Data.Motion != null)
             {
@@ -155,12 +154,20 @@ namespace UnityNN.Editor
                     loader.Data.Object
                 );
 
-                if (mainNodeClip != null && loadedClipNames.Add(mainNodeClip.name))
+                if (mainNodeClip != null)
                 {
-                    ctx.AddObjectToAsset("NodeAnimation", mainNodeClip);
-                    loadedClips.Add(mainNodeClip);
-                    loadedClipCache[$"{assetName}_node"] = mainNodeClip;
-                    distinctBoneFiles.Add(assetName);
+                    if (settings.CompressAnimation)
+                    {
+                        mainNodeClip = NinjaMotionCompressor.CompressNinjaClip(mainNodeClip, settings.CompressionSettings);
+                    }
+
+                    if (loadedClipNames.Add(mainNodeClip.name))
+                    {
+                        ctx.AddObjectToAsset("NodeAnimation", mainNodeClip);
+                        loadedClips.Add(mainNodeClip);
+                        loadedClipCache[$"{assetName}_node"] = mainNodeClip;
+                        distinctBoneFiles.Add(assetName);
+                    }
                 }
             }
 
@@ -176,12 +183,20 @@ namespace UnityNN.Editor
                     loader.Data.Object
                 );
 
-                if (mainMatClip != null && loadedClipNames.Add(mainMatClip.name))
+                if (mainMatClip != null)
                 {
-                    ctx.AddObjectToAsset("MaterialAnimation", mainMatClip);
-                    loadedClips.Add(mainMatClip);
-                    loadedClipCache[$"{assetName}_mat"] = mainMatClip;
-                    distinctTexFiles.Add(assetName);
+                    if (settings.CompressAnimation)
+                    {
+                        mainMatClip = NinjaMotionCompressor.CompressNinjaClip(mainMatClip, settings.CompressionSettings);
+                    }
+
+                    if (loadedClipNames.Add(mainMatClip.name))
+                    {
+                        ctx.AddObjectToAsset("MaterialAnimation", mainMatClip);
+                        loadedClips.Add(mainMatClip);
+                        loadedClipCache[$"{assetName}_mat"] = mainMatClip;
+                        distinctTexFiles.Add(assetName);
+                    }
                 }
             }
 
@@ -227,43 +242,51 @@ namespace UnityNN.Editor
                             loader.Data.Object
                         );
 
-                        if (clip != null && loadedClipNames.Add(clip.name))
+                        if (clip != null)
                         {
-                            ctx.AddObjectToAsset(clipId, clip);
-                            loadedClips.Add(clip);
-                            loadedClipCache[cacheKey] = clip;
-
-                            bool isExactMatch = rawAnimName.Equals(assetName, StringComparison.OrdinalIgnoreCase);
-
-                            if (isMat)
+                            if (settings.CompressAnimation)
                             {
-                                distinctTexFiles.Add(rawAnimName);
-                                if (mainMatClip == null || isExactMatch)
+                                clip = NinjaMotionCompressor.CompressNinjaClip(clip, settings.CompressionSettings);
+                            }
+
+                            if (loadedClipNames.Add(clip.name))
+                            {
+                                ctx.AddObjectToAsset(clipId, clip);
+                                loadedClips.Add(clip);
+                                loadedClipCache[cacheKey] = clip;
+
+                                bool isExactMatch = rawAnimName.Equals(assetName, StringComparison.OrdinalIgnoreCase);
+
+                                if (isMat)
                                 {
-                                    mainMatClip = clip;
+                                    distinctTexFiles.Add(rawAnimName);
+                                    if (mainMatClip == null || isExactMatch)
+                                    {
+                                        mainMatClip = clip;
+                                    }
                                 }
-                            }
-                            else
-                            {
-                                distinctBoneFiles.Add(rawAnimName);
-                                if (mainNodeClip == null || isExactMatch)
+                                else
                                 {
-                                    mainNodeClip = clip;
+                                    distinctBoneFiles.Add(rawAnimName);
+                                    if (mainNodeClip == null || isExactMatch)
+                                    {
+                                        mainNodeClip = clip;
+                                    }
                                 }
-                            }
 
-                            if (animMeta == null)
-                            {
-                                animMeta = rootGO.AddComponent<RelObjectAnimationComponent>();
-                            }
+                                if (animMeta == null)
+                                {
+                                    animMeta = rootGO.AddComponent<RelObjectAnimationComponent>();
+                                }
 
-                            animMeta.animations.Add(new ObjectAnimationEntryData
-                            {
-                                boneAnimName = isMat ? "" : rawAnimName,
-                                texAnimName = isMat ? rawAnimName : "",
-                                boneClip = isMat ? null : clip,
-                                materialClip = isMat ? clip : null
-                            });
+                                animMeta.animations.Add(new ObjectAnimationEntryData
+                                {
+                                    boneAnimName = isMat ? "" : rawAnimName,
+                                    texAnimName = isMat ? rawAnimName : "",
+                                    boneClip = isMat ? null : clip,
+                                    materialClip = isMat ? clip : null
+                                });
+                            }
                         }
                     }
                 }
@@ -277,7 +300,7 @@ namespace UnityNN.Editor
             if (loadedClips.Count > 0)
             {
                 Animator animator = rootGO.AddComponent<Animator>();
-            
+
                 if (settings.GenerateAnimatorController)
                 {
                     if (settings.AnimationLayerMode == AnimationLayerMode.SeparateClipsAndLayers)
@@ -360,21 +383,21 @@ namespace UnityNN.Editor
             AssetImportContext ctx)
         {
             if (clips == null || clips.Count == 0 || animator == null) return;
-        
+
             AnimatorController controller = new AnimatorController { name = $"{assetName}_Controller" };
             ctx.AddObjectToAsset("AnimatorController", controller);
-        
+
             for (int i = 0; i < clips.Count; i++)
             {
                 AnimationClip clip = clips[i];
                 if (clip == null) continue;
-        
-                string layerName = (i == 0) 
-                    ? "Base Layer" 
+
+                string layerName = (i == 0)
+                    ? "Base Layer"
                     : (clip.name.Contains("Material") ? $"Material Layer {i}" : $"Layer {i}");
-        
+
                 controller.AddLayer(layerName);
-        
+
                 var layers = controller.layers;
                 int layerIdx = layers.Length - 1;
                 if (layerIdx > 0)
@@ -382,7 +405,7 @@ namespace UnityNN.Editor
                     layers[layerIdx].defaultWeight = 1.0f; // Enable layer weight fully
                     controller.layers = layers;
                 }
-        
+
                 AnimatorStateMachine sm = controller.layers[layerIdx].stateMachine;
                 if (sm != null)
                 {
@@ -393,7 +416,7 @@ namespace UnityNN.Editor
                     ctx.AddObjectToAsset($"{clip.name}_State", st);
                 }
             }
-        
+
             animator.runtimeAnimatorController = controller;
         }
     }
