@@ -100,33 +100,60 @@ namespace UnityNN.Editor
         /// <summary>
         /// Unrolls a 16-bit BAMS integer angle across consecutive keyframes to prevent 180-degree overflow flipping.
         /// </summary>
-        public static int UnrollBams16(short rawValue, ref long accumBams, ref bool isFirst)
+        public static int UnrollBams16(short rawValue, ref long accumBams, ref int lastDelta, ref bool isFirst)
         {
             if (isFirst)
             {
                 accumBams = rawValue;
+                lastDelta = 0;
                 isFirst = false;
+                return (int)accumBams;
+            }
+
+            int currU16 = rawValue & 0xFFFF;
+            int prevU16 = (int)(accumBams & 0xFFFF);
+            int diff = (currU16 - prevU16) & 0xFFFF;
+
+            int delta;
+            if (diff < 32768)
+            {
+                delta = diff;
+            }
+            else if (diff > 32768)
+            {
+                delta = diff - 65536;
             }
             else
             {
-                int delta = rawValue - (int)(accumBams & 0xFFFF);
-                accumBams += (delta + 32768) % 65536 - 32768;
+                delta = (lastDelta >= 0) ? 32768 : -32768;
             }
+
+            lastDelta = delta;
+            accumBams += delta;
             return (int)accumBams;
         }
 
         /// <summary>
         /// Unrolls a 16-bit BAMS integer angle and converts the unrolled result directly to degrees.
         /// </summary>
-        public static float Bams16ToUnrolledDegrees(short rawValue, ref long accumBams, ref bool isFirst)
+        public static int UnrollBams16(short rawValue, ref long accumBams, ref bool isFirst)
         {
-            int unrolledBams = UnrollBams16(rawValue, ref accumBams, ref isFirst);
+            int dummyDelta = 0;
+            return UnrollBams16(rawValue, ref accumBams, ref dummyDelta, ref isFirst);
+        }
+
+        public static float Bams16ToUnrolledDegrees(short rawValue, ref long accumBams, ref int lastDelta, ref bool isFirst)
+        {
+            int unrolledBams = UnrollBams16(rawValue, ref accumBams, ref lastDelta, ref isFirst);
             return BamsToDegrees(unrolledBams);
         }
 
-        /// <summary>
-        /// Computes Greatest Common Divisor.
-        /// </summary>
+        public static float Bams16ToUnrolledDegrees(short rawValue, ref long accumBams, ref bool isFirst)
+        {
+            int dummyDelta = 0;
+            return Bams16ToUnrolledDegrees(rawValue, ref accumBams, ref dummyDelta, ref isFirst);
+        }
+
         public static long Gcd(long a, long b) => b == 0 ? a : Gcd(b, a % b);
 
         /// <summary>
@@ -158,6 +185,7 @@ namespace UnityNN.Editor
             object kf,
             uint subMotionFlags,
             ref long accumS16Bams,
+            ref int lastDeltaS16,
             ref bool isFirstS16,
             out float frame,
             out float scalarValue)
@@ -181,7 +209,7 @@ namespace UnityNN.Editor
             if (kf is NinjaKeyframe.NNS_MOTION_KEY_SINT16 s16)
             {
                 frame = s16.Frame;
-                scalarValue = Bams16ToUnrolledDegrees(s16.Value, ref accumS16Bams, ref isFirstS16);
+                scalarValue = Bams16ToUnrolledDegrees(s16.Value, ref accumS16Bams, ref lastDeltaS16, ref isFirstS16);
                 return true;
             }
 
@@ -790,15 +818,16 @@ namespace UnityNN.Editor
                 bool hasRZ = (flags & 0x2000U) != 0;
 
                 long accumX = 0, accumY = 0, accumZ = 0;
+                int lastDeltaX = 0, lastDeltaY = 0, lastDeltaZ = 0;
                 bool first = true;
 
                 foreach (var objKf in subMotion.Keyframes)
                 {
                     var kf = (NinjaKeyframe.NNS_MOTION_KEY_ROTATE_A16)objKf;
 
-                    float degX = hasRX ? Bams16ToUnrolledDegrees(kf.Value1, ref accumX, ref first) : 0f;
-                    float degY = hasRY ? -Bams16ToUnrolledDegrees(kf.Value2, ref accumY, ref first) : 0f;
-                    float degZ = hasRZ ? -Bams16ToUnrolledDegrees(kf.Value3, ref accumZ, ref first) : 0f;
+                    float degX = hasRX ? Bams16ToUnrolledDegrees(kf.Value1, ref accumX, ref lastDeltaX, ref first) : 0f;
+                    float degY = hasRY ? -Bams16ToUnrolledDegrees(kf.Value2, ref accumY, ref lastDeltaY, ref first) : 0f;
+                    float degZ = hasRZ ? -Bams16ToUnrolledDegrees(kf.Value3, ref accumZ, ref lastDeltaZ, ref first) : 0f;
 
                     float time = (kf.Frame / 60.0f) * timeScale;
 
@@ -823,11 +852,12 @@ namespace UnityNN.Editor
 
                     PropertyKey key = new PropertyKey(targetPath, binding.ComponentType, propName);
                     long accumS16Bams = 0;
+                    int lastDeltaS16 = 0;
                     bool firstS16 = true;
 
                     foreach (var kf in subMotion.Keyframes)
                     {
-                        if (TryExtractScalarKeyframe(kf, flags, ref accumS16Bams, ref firstS16, out float rawFrame, out float scalarVal))
+                        if (TryExtractScalarKeyframe(kf, flags, ref accumS16Bams, ref lastDeltaS16, ref firstS16, out float rawFrame, out float scalarVal))
                         {
                             if (binding.GroupKey == "localPosition") scalarVal *= scale;
                             if (binding.InvertSign) scalarVal = -scalarVal;
