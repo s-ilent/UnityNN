@@ -421,6 +421,8 @@ namespace UnityNN.Editor
             public bool NoNormals;
             public bool NoTangents;
 
+            private readonly Dictionary<(int vListIdx, int origVIdx, int fallbackBoneIdx), int> m_VertexRemap;
+
             public MeshBuffer(int vertexCapacity = 0)
             {
                 int cap = Math.Max(0, vertexCapacity);
@@ -432,6 +434,7 @@ namespace UnityNN.Editor
                 UV2s = new List<Vector2>(cap);
                 BoneWeights = new List<BoneWeight>(cap);
                 SubmeshTriangles = new Dictionary<int, List<int>>();
+                m_VertexRemap = new Dictionary<(int, int, int), int>();
             }
 
             public List<int> GetSortedSubmeshKeys()
@@ -456,7 +459,9 @@ namespace UnityNN.Editor
 
                 var vList = objData.VertexLists[meshSet.VertexListIndex];
                 var pList = objData.PrimitiveLists[meshSet.PrimitiveListIndex];
-                int baseOffset = Positions.Count;
+                if (vList.Vertices == null || vList.Vertices.Count == 0)
+                    return;
+
                 bool isSkinned = vList.BoneMatrixIndices != null && vList.BoneMatrixIndices.Count > 0;
                 if (isSkinned) HasWeights = true;
                 if ((vList.Format & XboxVertexType.NND_VTXTYPE_XB_NORMAL) == 0)
@@ -467,67 +472,6 @@ namespace UnityNN.Editor
                 bool applyXform = localTransform.HasValue && localTransform.Value != Matrix4x4.identity;
                 Matrix4x4 xform = localTransform.GetValueOrDefault(Matrix4x4.identity);
 
-                for (int v = 0; v < vList.Vertices.Count; v++)
-                {
-                    NinjaVertex vert = vList.Vertices[v];
-                    if (vert == null) continue;
-
-                    Vector3 rawPos = vert.Position.GetValueOrDefault();
-                    Vector3 pos = NinjaCoordinateUtility.ToUnityPosition(rawPos, scale);
-                    if (applyXform) pos = xform.MultiplyPoint3x4(pos);
-                    Positions.Add(pos);
-
-                    Vector3 rawNorm = vert.Normals.GetValueOrDefault(Vector3.up);
-                    Vector3 norm = NinjaCoordinateUtility.ToUnityNormal(rawNorm);
-                    if (applyXform) norm = xform.MultiplyVector(norm).normalized;
-                    Normals.Add(norm);
-
-                    Vector3 rawTan = vert.Tangent.GetValueOrDefault(Vector3.right);
-                    Vector4 tan = NinjaCoordinateUtility.ToUnityTangent(rawTan);
-                    if (applyXform)
-                    {
-                        Vector3 transformedTan = xform.MultiplyVector(new Vector3(tan.x, tan.y, tan.z)).normalized;
-                        tan = new Vector4(transformedTan.x, transformedTan.y, transformedTan.z, tan.w);
-                    }
-                    Tangents.Add(tan);
-
-                    if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 0)
-                        UVs.Add(NinjaCoordinateUtility.ToUnityUV(vert.TextureCoordinates[0]));
-                    else
-                        UVs.Add(Vector2.zero);
-
-                    if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 1)
-                        UV2s.Add(NinjaCoordinateUtility.ToUnityUV(vert.TextureCoordinates[1]));
-                    else if (UV2s.Count > 0)
-                        UV2s.Add(Vector2.zero);
-
-                    if (vert.VertexColours != null && vert.VertexColours.Length >= 4)
-                        Colors.Add(new Color32(vert.VertexColours[2], vert.VertexColours[1], vert.VertexColours[0], vert.VertexColours[3]));
-                    else
-                        Colors.Add(new Color32(255, 255, 255, 255));
-
-                    BoneWeight bw = new BoneWeight();
-                    if (isSkinned && vert.Weight.HasValue && vert.MatrixIndices != null && vert.MatrixIndices.Length >= 4)
-                    {
-                        bw.boneIndex0 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[0]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[0] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[0]] : fallbackBoneIdx);
-                        bw.boneIndex1 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[1]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[1] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[1]] : fallbackBoneIdx);
-                        bw.boneIndex2 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[2]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[2] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[2]] : fallbackBoneIdx);
-                        bw.boneIndex3 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[3]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[3] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[3]] : fallbackBoneIdx);
-
-                        Vector3 w = vert.Weight.Value;
-                        bw.weight0 = w.x;
-                        bw.weight1 = w.y;
-                        bw.weight2 = w.z;
-                        bw.weight3 = Mathf.Max(0f, 1.0f - (w.x + w.y + w.z));
-                    }
-                    else
-                    {
-                        bw.boneIndex0 = fallbackBoneIdx;
-                        bw.weight0 = 1.0f;
-                    }
-                    BoneWeights.Add(bw);
-                }
-
                 if (!SubmeshTriangles.TryGetValue(submeshKey, out List<int> tris))
                 {
                     tris = new List<int>();
@@ -535,8 +479,121 @@ namespace UnityNN.Editor
                 }
 
                 List<int> decoded = DecodeIndices(pList);
-                for (int t = 0; t < decoded.Count; t++)
-                    tris.Add(baseOffset + decoded[t]);
+                int vListIdx = meshSet.VertexListIndex;
+
+                for (int t = 0; t + 2 < decoded.Count; t += 3)
+                {
+                    int i0 = decoded[t];
+                    int i1 = decoded[t + 1];
+                    int i2 = decoded[t + 2];
+
+                    if (i0 < 0 || i0 >= vList.Vertices.Count ||
+                        i1 < 0 || i1 >= vList.Vertices.Count ||
+                        i2 < 0 || i2 >= vList.Vertices.Count)
+                    {
+                        continue;
+                    }
+
+                    tris.Add(GetOrAddVertex(vList, vListIdx, i0, scale, applyXform, xform, isSkinned, bonePaletteRemap, fallbackBoneIdx));
+                    tris.Add(GetOrAddVertex(vList, vListIdx, i1, scale, applyXform, xform, isSkinned, bonePaletteRemap, fallbackBoneIdx));
+                    tris.Add(GetOrAddVertex(vList, vListIdx, i2, scale, applyXform, xform, isSkinned, bonePaletteRemap, fallbackBoneIdx));
+                }
+            }
+
+            private int GetOrAddVertex(
+                NinjaVertexList vList,
+                int vListIdx,
+                int origVIdx,
+                float scale,
+                bool applyXform,
+                Matrix4x4 xform,
+                bool isSkinned,
+                Func<byte, int> bonePaletteRemap,
+                int fallbackBoneIdx)
+            {
+                var remapKey = (vListIdx, origVIdx, fallbackBoneIdx);
+                if (m_VertexRemap.TryGetValue(remapKey, out int existingIdx))
+                {
+                    return existingIdx;
+                }
+
+                int newIdx = Positions.Count;
+                m_VertexRemap[remapKey] = newIdx;
+
+                NinjaVertex vert = vList.Vertices[origVIdx];
+                if (vert == null)
+                {
+                    Positions.Add(Vector3.zero);
+                    Normals.Add(Vector3.up);
+                    Tangents.Add(new Vector4(1f, 0f, 0f, 1f));
+                    UVs.Add(Vector2.zero);
+                    if (UV2s.Count > 0) UV2s.Add(Vector2.zero);
+                    Colors.Add(new Color32(255, 255, 255, 255));
+                    if (HasWeights) BoneWeights.Add(new BoneWeight { boneIndex0 = fallbackBoneIdx, weight0 = 1.0f });
+                    return newIdx;
+                }
+
+                Vector3 rawPos = vert.Position.GetValueOrDefault();
+                Vector3 pos = NinjaCoordinateUtility.ToUnityPosition(rawPos, scale);
+                if (applyXform) pos = xform.MultiplyPoint3x4(pos);
+                Positions.Add(pos);
+
+                Vector3 rawNorm = vert.Normals.GetValueOrDefault(Vector3.up);
+                Vector3 norm = NinjaCoordinateUtility.ToUnityNormal(rawNorm);
+                if (applyXform) norm = xform.MultiplyVector(norm).normalized;
+                Normals.Add(norm);
+
+                Vector3 rawTan = vert.Tangent.GetValueOrDefault(Vector3.right);
+                Vector4 tan = NinjaCoordinateUtility.ToUnityTangent(rawTan);
+                if (applyXform)
+                {
+                    Vector3 transformedTan = xform.MultiplyVector(new Vector3(tan.x, tan.y, tan.z)).normalized;
+                    tan = new Vector4(transformedTan.x, transformedTan.y, transformedTan.z, tan.w);
+                }
+                Tangents.Add(tan);
+
+                if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 0)
+                    UVs.Add(NinjaCoordinateUtility.ToUnityUV(vert.TextureCoordinates[0]));
+                else
+                    UVs.Add(Vector2.zero);
+
+                if (vert.TextureCoordinates != null && vert.TextureCoordinates.Count > 1)
+                {
+                    while (UV2s.Count < Positions.Count - 1) UV2s.Add(Vector2.zero);
+                    UV2s.Add(NinjaCoordinateUtility.ToUnityUV(vert.TextureCoordinates[1]));
+                }
+                else if (UV2s.Count > 0)
+                {
+                    UV2s.Add(Vector2.zero);
+                }
+
+                if (vert.VertexColours != null && vert.VertexColours.Length >= 4)
+                    Colors.Add(new Color32(vert.VertexColours[2], vert.VertexColours[1], vert.VertexColours[0], vert.VertexColours[3]));
+                else
+                    Colors.Add(new Color32(255, 255, 255, 255));
+
+                BoneWeight bw = new BoneWeight();
+                if (isSkinned && vert.Weight.HasValue && vert.MatrixIndices != null && vert.MatrixIndices.Length >= 4)
+                {
+                    bw.boneIndex0 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[0]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[0] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[0]] : fallbackBoneIdx);
+                    bw.boneIndex1 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[1]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[1] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[1]] : fallbackBoneIdx);
+                    bw.boneIndex2 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[2]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[2] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[2]] : fallbackBoneIdx);
+                    bw.boneIndex3 = bonePaletteRemap != null ? bonePaletteRemap(vert.MatrixIndices[3]) : (vList.BoneMatrixIndices != null && vert.MatrixIndices[3] < vList.BoneMatrixIndices.Count ? vList.BoneMatrixIndices[vert.MatrixIndices[3]] : fallbackBoneIdx);
+
+                    Vector3 w = vert.Weight.Value;
+                    bw.weight0 = w.x;
+                    bw.weight1 = w.y;
+                    bw.weight2 = w.z;
+                    bw.weight3 = Mathf.Max(0f, 1.0f - (w.x + w.y + w.z));
+                }
+                else
+                {
+                    bw.boneIndex0 = fallbackBoneIdx;
+                    bw.weight0 = 1.0f;
+                }
+                BoneWeights.Add(bw);
+
+                return newIdx;
             }
 
             public Mesh BuildMesh(string meshName)
