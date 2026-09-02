@@ -192,6 +192,7 @@ namespace UnityNN.Editor
         /// Generates tiled frame timestamps across the master animation timeline [0, masterEndFrames],
         /// including prior/subsequent cycles (c = -1 to maxCycle + 1) to anchor Frame 0 and Frame masterEndFrames.
         /// </summary>
+
         public static List<float> GenerateTiledFrameTimes(
             float rawFrame,
             float subStart,
@@ -199,32 +200,7 @@ namespace UnityNN.Editor
             float masterEndFrames,
             bool isRepeatingTrack)
         {
-            List<float> tiledFrames = new List<float>();
-            float cycleLen = subEnd - subStart;
-            bool shouldTile = isRepeatingTrack && cycleLen > 0.1f && (subEnd + 0.1f) < masterEndFrames;
-        
-            if (!shouldTile)
-            {
-                tiledFrames.Add(rawFrame);
-                return tiledFrames;
-            }
-        
-            // Evaluate cycle from c = -1 (to anchor Frame 0) through maxCycle + 1 (to anchor masterEnd)
-            int minCycle = -1;
-            int maxCycle = (int)Math.Ceiling(masterEndFrames / cycleLen) + 1;
-        
-            for (int c = minCycle; c <= maxCycle; c++)
-            {
-                float cycleOffset = c * cycleLen;
-                float tiledFrame = subStart + cycleOffset + (rawFrame - subStart);
-        
-                if (tiledFrame >= 0f && tiledFrame <= masterEndFrames)
-                {
-                    tiledFrames.Add(tiledFrame);
-                }
-            }
-        
-            return tiledFrames;
+            return new List<float> { rawFrame };
         }
 
         /// <summary>
@@ -232,28 +208,8 @@ namespace UnityNN.Editor
         /// </summary>
         public static long CalculateEffectiveLoopFrames(NinjaMotion motionData, long maxCap = 2400)
         {
-            if (motionData?.SubMotions == null || motionData.SubMotions.Count == 0) return 600;
-
-            long masterFrames = (long)Mathf.Max(1f, motionData.EndFrame - motionData.StartFrame);
-            long effectiveFrames = masterFrames;
-
-            foreach (var sm in motionData.SubMotions)
-            {
-                if (sm == null || sm.Keyframes == null || sm.Keyframes.Count <= 1) continue;
-
-                bool isRepeatTrack = (sm.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT |
-                                                              SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT)) != 0;
-
-                long subCycleFrames = (long)Mathf.Max(1f, sm.EndKeyframe - sm.StartKeyframe);
-
-                if (isRepeatTrack && subCycleFrames > 0 && subCycleFrames < masterFrames)
-                {
-                    effectiveFrames = Lcm(effectiveFrames, subCycleFrames);
-                    if (effectiveFrames > maxCap) { effectiveFrames = maxCap; break; }
-                }
-            }
-
-            return effectiveFrames;
+            if (motionData == null) return 600;
+            return (long)Mathf.Max(1f, motionData.EndFrame - motionData.StartFrame);
         }
 
         #endregion
@@ -480,9 +436,8 @@ namespace UnityNN.Editor
             float framerate = motionData.Framerate <= 0 ? 60.0f : motionData.Framerate;
             float timeScale = 60.0f / framerate;
 
-            // Calculate seamless effective clip duration using LCM for repeating sub-tracks
-            long effectiveFrames = CalculateEffectiveLoopFrames(motionData);
-            float maxTime = (effectiveFrames / 60.0f) * timeScale;
+            float totalFrames = Mathf.Max(1f, motionData.EndFrame - motionData.StartFrame);
+            float maxTime = (totalFrames / 60.0f) * timeScale;
 
             nodeHierarchyTargets ??= Array.Empty<string>();
             Dictionary<PropertyKey, List<SubMotionSegment>> propertySegments = new Dictionary<PropertyKey, List<SubMotionSegment>>();
@@ -524,18 +479,17 @@ namespace UnityNN.Editor
                             scale,
                             effectiveMotionType,
                             target.MaterialSlot,
-                            layerIndex,
-                            effectiveFrames
+                            layerIndex
                         );
                     }
                 }
                 else
                 {
-                    string targetPath = (sm.NodeIndex >= 0 && sm.NodeIndex < nodeHierarchyTargets.Length && !string.IsNullOrEmpty(nodeHierarchyTargets[sm.NodeIndex]))
+                    string targetPath = (sm.NodeIndex >= 0 && sm.NodeIndex < nodeHierarchyTargets.Length)
                         ? nodeHierarchyTargets[sm.NodeIndex]
                         : sm.NodeIndex.ToString("0000");
 
-                    CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, effectiveMotionType, 0, 0, effectiveFrames);
+                    CollectSubMotionSegments(sm, targetPath, propertySegments, timeScale, scale, effectiveMotionType, 0, 0);
                 }
             }
 
@@ -604,7 +558,6 @@ namespace UnityNN.Editor
             List<MaterialBindingTarget> targets = new List<MaterialBindingTarget>();
             HashSet<string> seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // 1. Map directly from NinjaObject mesh sets and node hierarchy definitions
             if (objData?.SubObjects != null && objData.Nodes != null)
             {
                 if (importMode == MeshImportMode.SingleSkinnedMesh)
@@ -666,7 +619,6 @@ namespace UnityNN.Editor
                 }
             }
 
-            // 2. Fallback: Inspect live hierarchy Renderers using exact material prefix matching
             if (rootGO != null)
             {
                 Renderer[] renderers = rootGO.GetComponentsInChildren<Renderer>(true);
@@ -786,20 +738,13 @@ namespace UnityNN.Editor
             float scale,
             MotionType parentType,
             int materialSlot = 0,
-            int layerIndex = 0,
-            float masterEndFrames = 600f)
+            int layerIndex = 0)
         {
             if (subMotion?.Keyframes == null || subMotion.Keyframes.Count == 0) return;
 
             uint flags = (uint)subMotion.Type;
             uint cat = (uint)parentType & 31U;
             if (cat == 0) cat = 1;
-
-            bool isRepeatingTrack = (subMotion.InterpolationType & (SubMotionInterpolationType.NND_SMOTIPTYPE_REPEAT |
-                                                                   SubMotionInterpolationType.NND_SMOTIPTYPE_CONSTREPEAT)) != 0;
-
-            float subStart = subMotion.StartKeyframe;
-            float subEnd = subMotion.EndKeyframe;
 
             // --------------------------------------------------------------------------
             // A. Vector3 Keyframe Tracks
@@ -827,11 +772,8 @@ namespace UnityNN.Editor
                             if (binding.GroupKey == "localPosition") rawVal *= scale;
                             if (binding.InvertSign) rawVal = -rawVal;
 
-                            foreach (float tiledFrame in GenerateTiledFrameTimes(kf.Frame, subStart, subEnd, masterEndFrames, isRepeatingTrack))
-                            {
-                                float time = (tiledFrame / 60.0f) * timeScale;
-                                AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, rawVal));
-                            }
+                            float time = (kf.Frame / 60.0f) * timeScale;
+                            AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, rawVal));
                         }
                     }
                 }
@@ -858,14 +800,11 @@ namespace UnityNN.Editor
                     float degY = hasRY ? -Bams16ToUnrolledDegrees(kf.Value2, ref accumY, ref first) : 0f;
                     float degZ = hasRZ ? -Bams16ToUnrolledDegrees(kf.Value3, ref accumZ, ref first) : 0f;
 
-                    foreach (float tiledFrame in GenerateTiledFrameTimes(kf.Frame, subStart, subEnd, masterEndFrames, isRepeatingTrack))
-                    {
-                        float time = (tiledFrame / 60.0f) * timeScale;
+                    float time = (kf.Frame / 60.0f) * timeScale;
 
-                        if (hasRX) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, degX));
-                        if (hasRY) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, degY));
-                        if (hasRZ) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, degZ));
-                    }
+                    if (hasRX) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.x"), subMotion.InterpolationType, new Keyframe(time, degX));
+                    if (hasRY) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.y"), subMotion.InterpolationType, new Keyframe(time, degY));
+                    if (hasRZ) AddKeyframe(propertySegments, new PropertyKey(targetPath, typeof(Transform), "localEulerAnglesRaw.z"), subMotion.InterpolationType, new Keyframe(time, degZ));
                 }
                 return;
             }
@@ -893,11 +832,8 @@ namespace UnityNN.Editor
                             if (binding.GroupKey == "localPosition") scalarVal *= scale;
                             if (binding.InvertSign) scalarVal = -scalarVal;
 
-                            foreach (float tiledFrame in GenerateTiledFrameTimes(rawFrame, subStart, subEnd, masterEndFrames, isRepeatingTrack))
-                            {
-                                float time = (tiledFrame / 60.0f) * timeScale;
-                                AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, scalarVal));
-                            }
+                            float time = (rawFrame / 60.0f) * timeScale;
+                            AddKeyframe(propertySegments, key, subMotion.InterpolationType, new Keyframe(time, scalarVal));
                         }
                     }
                 }
@@ -934,7 +870,6 @@ namespace UnityNN.Editor
                         if (!propertySegments.ContainsKey(channelKey))
                         {
                             float defVal = GetDefaultChannelValue(companion, nodeTr);
-                            // Use LINEAR interpolation instead of CONSTANT for rotation/position companion channels
                             var seg = new SubMotionSegment { InterpolationType = SubMotionInterpolationType.NND_SMOTIPTYPE_LINEAR };
                             seg.Keyframes.Add(new Keyframe(0f, defVal, 0f, 0f));
 
@@ -1034,7 +969,6 @@ namespace UnityNN.Editor
             if (segments == null || segments.Count == 0) return null;
             List<Keyframe> allKfs = new List<Keyframe>();
         
-            // Transform rotation properties must never use PositiveInfinity (stepped) tangents
             bool isTransformRotation = key.ComponentType == typeof(Transform) && key.PropertyName.StartsWith("localEulerAngles");
         
             foreach (var seg in segments)
@@ -1095,9 +1029,7 @@ namespace UnityNN.Editor
                 unique.Add(kf);
             }
         
-            // --------------------------------------------------------------------------
             // Boundary Anchoring: Ensure t = 0.0s and t = maxTime are explicitly anchored
-            // --------------------------------------------------------------------------
             if (unique[0].time > 0.0001f)
             {
                 Keyframe first = unique[0];
