@@ -392,7 +392,6 @@ namespace UnityNN.Editor
                 while (curr >= 0 && curr < nodes.Count)
                 {
                     NinjaNode node = nodes[curr];
-                    if (node.ParentIndex == -1) break;
                     parts.Insert(0, !string.IsNullOrEmpty(node.Name) ? node.Name : $"Node_{curr:0000}");
                     curr = node.ParentIndex;
                 }
