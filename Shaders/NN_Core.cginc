@@ -58,6 +58,10 @@ sampler2D _EmissionMap;
 float4 _EmissionMap_ST;
 float _EmissionPower;
 
+// System
+half _MaterialType;
+half _MaterialFlags;
+
 // --------------------------------------------------------------------------
 // Structs & Material Inputs
 // --------------------------------------------------------------------------
@@ -93,6 +97,7 @@ struct appdata_nn
 {
     float4 vertex   : POSITION;
     float3 normal   : NORMAL;
+    float4 tangent   : TANGENT;
     float4 texcoord : TEXCOORD0;
     float4 texcoord1: TEXCOORD1;
     centroid half4 color    : COLOR;
@@ -106,8 +111,9 @@ struct v2f_nn
     float4 uv1          : TEXCOORD1; // xy: MainTex3, zw: BumpMap
     float4 worldPos     : TEXCOORD2; // xyz: worldPos, w: fogFactor
     float3 worldNormal  : TEXCOORD3;
+    float4 worldTangent : TEXCOORD4; // xyz: worldTangent, w: sign
     centroid half4 color        : COLOR;
-    UNITY_SHADOW_COORDS(4)
+    UNITY_SHADOW_COORDS(5)
     UNITY_VERTEX_INPUT_INSTANCE_ID
     UNITY_VERTEX_OUTPUT_STEREO
 };
@@ -159,7 +165,7 @@ void applyUnityFog(inout half3 col, float depth)
 // --------------------------------------------------------------------------
 // Vertex Shader
 // --------------------------------------------------------------------------
-
+// 
 v2f_nn vert_nn(appdata_nn v)
 {
     v2f_nn o;
@@ -171,6 +177,9 @@ v2f_nn vert_nn(appdata_nn v)
     o.worldPos.xyz = mul(unity_ObjectToWorld, v.vertex).xyz;
     o.worldPos.w = o.pos.z;
     o.worldNormal = UnityObjectToWorldNormal(v.normal);
+    float3 wTangent = UnityObjectToWorldDir(v.tangent.xyz);
+    float tangentSign = v.tangent.w * unity_WorldTransformParams.w;
+    o.worldTangent = float4(wTangent, tangentSign);
     
     o.uv0.xy = TRANSFORM_TEX(v.texcoord.xy, _MainTex);
     o.uv0.zw = TRANSFORM_TEX(v.texcoord.xy, _MainTex2);
@@ -240,20 +249,7 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     MaterialInputs material;
     initMaterial(material);
 
-    //half4 mainTex = tex2D(_MainTex, i.uv0.xy);
     half4 mainTex = SampleBicubicBSpline(_MainTex, _MainTex_TexelSize, i.uv0.xy);
-    
-    // Multi-Texture Layers (TexMaps)
-    if (_MainTex2BlendMode > 0.5)
-    {
-        half4 tex2 = SampleBicubicBSpline(_MainTex2, _MainTex2_TexelSize, i.uv0.zw);
-        mainTex.rgb = ApplyTextureBlend(mainTex, tex2, _MainTex2BlendMode);
-    }
-    if (_MainTex3BlendMode > 0.5)
-    {
-        half4 tex3 = SampleBicubicBSpline(_MainTex3, _MainTex3_TexelSize, i.uv1.xy);
-        mainTex.rgb = ApplyTextureBlend(mainTex, tex3, _MainTex3BlendMode);
-    }
     
     half4 vcolor = i.color;
     vcolor.rgb *= _VertexColorScale;
@@ -262,17 +258,28 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     float greyLevel = 150.0f / 255.0f;
     // Convert texture * material diffuse to gamma space for vertex color multiplication
     float3 linearToGamma = LinearToGammaSpace((mainTex * _Color).rgb);
-    float3 gammaBlended = (linearToGamma * vcolor.rgb) / greyLevel;
+    float3 gammaBlended = (linearToGamma * vcolor.rgb);
+    // Multi-Texture Layers (TexMaps)
+    if (_MainTex2BlendMode > 0.5)
+    {
+        half4 tex2 = SampleBicubicBSpline(_MainTex2, _MainTex2_TexelSize, i.uv0.zw);
+        gammaBlended = ApplyTextureBlend(gammaBlended, tex2, _MainTex2BlendMode);
+    }
+    if (_MainTex3BlendMode > 0.5)
+    {
+        half4 tex3 = SampleBicubicBSpline(_MainTex3, _MainTex3_TexelSize, i.uv1.xy);
+        gammaBlended = ApplyTextureBlend(gammaBlended, tex3, _MainTex3BlendMode);
+    }
+    gammaBlended /= greyLevel;
     float3 gammaToLinear = GammaToLinearSpace(gammaBlended);
-
+    
     float hdrMult = _HDRIntensity * _EmissionPower;
     if (hdrMult <= 0.0) hdrMult = 1.0;
 
     float4 fullColorAlpha = (mainTex * _Color * vcolor);
     material.baseColor = float4(gammaToLinear * hdrMult, fullColorAlpha.a);
 
-
-    // 3. Normal Vector Setup
+    // Normal Vector Setup
     float3 N = normalize(i.worldNormal);
     if (!isFrontFace) N = -N;
 
@@ -280,11 +287,17 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
     {
         half4 bumpTex = tex2D(_BumpMap, i.uv1.zw);
         float3 tangentNormal = UnpackScaleNormal(bumpTex, _BumpScale);
-        N = normalize(N + tangentNormal * 0.5);
+    
+        float3 T = normalize(i.worldTangent.xyz);
+        float3 B = cross(N, T) * i.worldTangent.w;
+        float3x3 tbn = float3x3(T, B, N);
+    
+        N = normalize(mul(tangentNormal, tbn));
     }
+    
     material.normal = N;
 
-    // 4. Matcap Application
+    // Matcap Application
     if (_UseMatcap > 0.5)
     {
         float3 viewDir = normalize(_WorldSpaceCameraPos - i.worldPos);
@@ -300,19 +313,22 @@ MaterialInputs MyMaterialSetup(v2f_nn i, bool isFrontFace)
             material.baseColor.rgb = lerp(material.baseColor.rgb, matcapCol.rgb, matcapCol.a);
     }
 
-    // 5. Specular Map & Shininess
+    // Specular Map & Shininess
     material.smoothness = _Shininess;
     half4 specTex = tex2D(_SpecGlossMap, i.uv0.xy);
     material.specularColor = _SpecColor.rgb * specTex.rgb;
     // Todo: Switch based on whether _SpecGlossMap exists. For PSU using the main tex looks more correct. 
     material.specularColor *= material.baseColor;
 
-    // 6. Emission
+    // Emission
     float maxEmisColor = max(_EmissionColor.r, max(_EmissionColor.g, _EmissionColor.b));
     if (maxEmisColor > 0.001 || _EmissionPower > 1.0)
     {
         material.emissive = tex2D(_EmissionMap, TRANSFORM_TEX(i.uv0.xy, _EmissionMap)).rgb * _EmissionColor.rgb * _EmissionPower;
     }
+
+    // Strangely, additive materials seem to use the material alpha to fade in and out in animations.
+    material.baseColor.rgb *= material.baseColor.a;
 
     return material;
 }
@@ -363,7 +379,7 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     {
         float3 H = normalize(L + shading.view);
         float NdotH = max(0.0, dot(shading.normal, H));
-        float specPower = exp2(material.smoothness * 10.0);
+        float specPower = max(1.0, material.smoothness * 128.0);
         specular = _LightColor0.rgb * material.specularColor * pow(NdotH, specPower) * shading.attenuation;
     }
 
