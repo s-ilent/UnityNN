@@ -157,7 +157,6 @@ void applyUnityFog(inout half3 col, float depth)
         #if defined(UNITY_PASS_FORWARDADD)
             appliedFogColor = fixed3(0, 0, 0);
         #endif
-
         col.rgb = lerp(appliedFogColor, col.rgb, saturate(fogFactor));
     #endif
 }
@@ -368,6 +367,11 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
     float NdotL = max(0.0, dot(shading.normal, L));
     
     half3 baseBrightness = _LightColor0.rgb;
+
+    #if defined(SHADER_API_MOBILE)
+    baseBrightness = saturate(baseBrightness / 3.0);
+    #endif
+    
     // Typically, lighting is _LightColor0.rgb * NdotL * shading.attenuation;
     // But most environment meshes in PSU are static with baked vertex colours
     // representing baked lighting, and no normals. Importing them to Unity generates
@@ -380,10 +384,16 @@ half4 FragNNCommon(v2f_nn i, bool isFrontFace, uniform bool isForwardAdd)
         float3 H = normalize(L + shading.view);
         float NdotH = max(0.0, dot(shading.normal, H));
         float specPower = max(1.0, material.smoothness * 128.0);
-        specular = _LightColor0.rgb * material.specularColor * pow(NdotH, specPower) * shading.attenuation;
+        specular = baseBrightness * material.specularColor * pow(NdotH, specPower) * shading.attenuation;
     }
 
-    half3 ambient = ShadeSH9(half4(shading.normal, 1.0)) * _AmbientColor.rgb;
+    half3 ambient = ShadeSH9(half4(shading.normal, 1.0));
+    
+    #if defined(SHADER_API_MOBILE)
+    ambient = saturate(ambient / 3.0);
+    #endif
+   
+    ambient *= _AmbientColor.rgb;
 
     // Todo: In cg0005, there are reflections of cutout geometry using additive blending, but they 
     // should have the cutout applied to them even though they're additive...
